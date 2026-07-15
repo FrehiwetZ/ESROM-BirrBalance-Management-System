@@ -353,8 +353,3 @@ enum role_name {
   cafe_manager
   company_manager
 }
-datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
-}

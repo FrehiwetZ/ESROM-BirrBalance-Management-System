@@ -73,6 +73,7 @@ app.get("/health/ready", async (req, res, next) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    console.error("DB health check failed:", error);
     res.status(503).json({
       status: "not_ready",
       database: "error",
