@@ -254,7 +254,6 @@ export default function ManagerPortal() {
           onReload={loadPortalData}
           apiPost={apiPost}
           apiPut={apiPut}
-          apiPatch={apiPatch}
           apiDelete={apiDelete}
         />
       )}
@@ -293,15 +292,20 @@ export default function ManagerPortal() {
         />
       )}
       {activeTab === 'messages' && (
-        <ManagerMessagesPage
-          conversations={conversations}
-          messages={messages}
-          apiPost={apiPost}
-          onReload={loadPortalData}
-          employeesList={employeesList}
-        />
-        {/* Messages UI reuses notifications API for outbound alerts */}
-      )}
+  <>
+    <ManagerMessagesPage
+      conversations={conversations}
+      messages={messages}
+      apiPost={apiPost}
+      onReload={loadPortalData}
+      employeesList={employeesList}
+    />
+
+    {/* Messages UI reuses notifications API for outbound alerts */}
+
+  </>
+
+)}
     </div>
   );
 }
