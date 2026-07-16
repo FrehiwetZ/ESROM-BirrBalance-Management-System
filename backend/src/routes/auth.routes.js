@@ -6,7 +6,9 @@ import {
   logout,
   refreshToken,
   requestPasswordReset,
+  getMe,
 } from "../controllers/auth.controller.js";
+import { authenticate } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
 const authLimiter = rateLimit({
@@ -21,5 +23,6 @@ router.post("/refresh", refreshToken);
 router.post("/logout", logout);
 router.post("/password-reset/request", authLimiter, requestPasswordReset);
 router.post("/password-reset/confirm", authLimiter, confirmPasswordReset);
+router.get("/me", authenticate, getMe);
 
 export default router;

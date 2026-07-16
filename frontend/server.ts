@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import http from 'http';
 import { createServer as createViteServer } from 'vite';
 import CryptoJS from 'crypto-js';
 import { User, MenuItem, Order, Feedback, AuditLog, Message, Conversation, WaiterPerformance } from './src/types';
@@ -412,6 +413,29 @@ function decryptAndVerifyQrToken(encryptedStr: string): { success: boolean; empI
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Native HTTP proxy to forward all /api and /uploads requests to the backend (port 5000)
+  app.use(['/api', '/uploads'], (req, res) => {
+    const options = {
+      hostname: 'localhost',
+      port: 5000,
+      path: req.originalUrl,
+      method: req.method,
+      headers: req.headers,
+    };
+
+    const proxyReq = http.request(options, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
+      proxyRes.pipe(res, { end: true });
+    });
+
+    req.pipe(proxyReq, { end: true });
+
+    proxyReq.on('error', (err) => {
+      console.error('Local Express Proxy error:', err);
+      res.status(500).send('Proxy error');
+    });
+  });
 
   app.use(express.json());
 

@@ -10,6 +10,8 @@ import {
   generateQR,
   createOnlineOrder,
   createFeedback,
+  listCafes,
+  listAvailableMenu,
 } from "../controllers/employee.controller.js";
 
 const router = express.Router();
@@ -19,6 +21,8 @@ router.use(requireRole(ROLES.EMPLOYEE));
 
 router.get("/profile", getProfile);
 router.get("/balance", getBalance);
+router.get("/cafes", listCafes);
+router.get("/menu", listAvailableMenu);
 router.get("/orders", getOrders);
 router.post("/orders", createOnlineOrder);
 router.get("/notifications", getNotifications);

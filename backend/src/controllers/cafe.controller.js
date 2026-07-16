@@ -4,6 +4,7 @@ import { sendReportResponse } from "../utils/report.js";
 import {
   createMenuItem,
   deleteMenuItem,
+  getCafeOrders,
   getCafeStatistics,
   getMenuItems,
   getOperationalReport,
@@ -18,11 +19,18 @@ import {
   validateMenuItemId,
   validateMenuItemUpdate,
 } from "../validators/cafe.validators.js";
+import { parsePagination } from "../validators/common.validators.js";
 import { getMonthRange } from "../utils/date.js";
 
 export const listMenuItems = asyncHandler(async (req, res) => {
   const items = await getMenuItems(req.user, req.ip);
   return successResponse(res, items, "Menu items fetched successfully");
+});
+
+export const listCafeOrders = asyncHandler(async (req, res) => {
+  const pagination = parsePagination(req.query);
+  const data = await getCafeOrders(req.user, pagination, req.ip);
+  return successResponse(res, data, "Cafe orders fetched successfully");
 });
 
 export const addMenuItem = asyncHandler(async (req, res) => {

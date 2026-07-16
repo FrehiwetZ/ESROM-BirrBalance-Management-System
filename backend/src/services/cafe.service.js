@@ -145,6 +145,82 @@ export const getMenuItems = async (user, ipAddress = null) => {
   return items.map(formatMenuItem);
 };
 
+export const getCafeOrders = async (user, pagination = { skip: 0, limit: 50, page: 1 }, ipAddress = null) => {
+  const cafeId = resolveCafeId(user);
+  const where = { cafe_id: cafeId };
+
+  const [orders, total] = await Promise.all([
+    prisma.orders.findMany({
+      where,
+      include: {
+        order_items: true,
+        users_orders_employee_idTousers: {
+          select: {
+            id: true,
+            fullname: true,
+            employee_external_id: true,
+            departments: { select: { name: true } },
+          },
+        },
+        users_orders_waiter_idTousers: {
+          select: { id: true, fullname: true },
+        },
+        cafes: { select: { name: true } },
+      },
+      orderBy: { created_at: "desc" },
+      skip: pagination.skip,
+      take: pagination.limit,
+    }),
+    prisma.orders.count({ where }),
+  ]);
+
+  await writeAuditLog({
+    userId: user.id,
+    action: "cafe.orders.list",
+    entityType: "orders",
+    description: `Listed orders for cafe ${cafeId}`,
+    ipAddress,
+  });
+
+  const items = orders.map((order) => {
+    const employee = order.users_orders_employee_idTousers;
+    const waiter = order.users_orders_waiter_idTousers;
+    return {
+      id: order.id,
+      order_uuid: order.order_uuid,
+      employee_id: order.employee_id,
+      employee_external_id: employee?.employee_external_id ?? null,
+      employee_name: employee?.fullname ?? null,
+      department: employee?.departments?.name ?? null,
+      waiter_id: order.waiter_id,
+      waiter_name: waiter?.fullname ?? null,
+      cafe_id: order.cafe_id,
+      cafe_name: order.cafes?.name ?? null,
+      total_amount: Number(order.total_amount),
+      status: order.status,
+      order_method: order.order_method,
+      created_at: order.created_at,
+      completed_at: order.completed_at,
+      order_items: order.order_items.map((item) => ({
+        id: item.id,
+        menu_item_id: item.menu_item_id,
+        item_name_snapshot: item.item_name_snapshot,
+        unit_price_snapshot: Number(item.unit_price_snapshot),
+        quantity: item.quantity,
+        subtotal: Number(item.subtotal),
+      })),
+    };
+  });
+
+  return {
+    items,
+    total,
+    page: pagination.page,
+    limit: pagination.limit,
+    total_pages: Math.ceil(total / pagination.limit),
+  };
+};
+
 export const createMenuItem = async (user, payload, imageFile, ipAddress) => {
   const cafeId = resolveCafeId(user);
   assertValidUploadedImage(imageFile);

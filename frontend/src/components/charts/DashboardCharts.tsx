@@ -59,23 +59,23 @@ export function MiniSparklineChart({ data, type = 'line', color = '#3B82F6' }: {
 }
 
 // Grouped Bar Chart: Coupon Allocation vs Redemption Activity (Manager Dashboard)
-export function CouponActivityChart({ period = 'week' }: { period: string }) {
+export function CouponActivityChart({
+  period = 'week',
+  data: externalData,
+}: {
+  period?: string;
+  data?: { name: string; Allocated: number; Redeemed: number }[] | null;
+}) {
   const { theme } = useTheme();
   
-  // Theme-aware variables
   const gridColor = theme === 'dark' ? '#1E3A5F' : '#E2E8F0';
   const tooltipBg = theme === 'dark' ? '#0D1B2E' : '#1E293B';
   const tooltipText = theme === 'dark' ? '#F0F6FF' : '#F8FAFC';
   
-  const data = [
-    { name: 'Mon', Allocated: 12000, Redeemed: 8500 },
-    { name: 'Tue', Allocated: 15000, Redeemed: 11200 },
-    { name: 'Wed', Allocated: 14500, Redeemed: 12100 },
-    { name: 'Thu', Allocated: 18000, Redeemed: 14500 },
-    { name: 'Fri', Allocated: 20000, Redeemed: 16800 },
-    { name: 'Sat', Allocated: 8000, Redeemed: 5200 },
-    { name: 'Sun', Allocated: 5000, Redeemed: 3100 },
+  const fallback = [
+    { name: '—', Allocated: 0, Redeemed: 0 },
   ];
+  const data = externalData && externalData.length > 0 ? externalData : fallback;
 
   return (
     <div className="h-48 md:h-64 w-full">
@@ -202,21 +202,19 @@ export function BalanceStatusDonut({ activeCount = 31, expiredCount = 9 }: { act
 }
 
 // Daily Order Volume (Cafe Dashboard)
-export function DailyOrderVolumeChart() {
+export function DailyOrderVolumeChart({
+  data: externalData,
+}: {
+  data?: { day: string; orders: number }[];
+}) {
   const { theme } = useTheme();
   const gridColor = theme === 'dark' ? '#1E3A5F' : '#E2E8F0';
   const tooltipBg = theme === 'dark' ? '#0D1B2E' : '#1E293B';
   const tooltipText = theme === 'dark' ? '#F0F6FF' : '#F8FAFC';
 
-  const data = [
-    { day: 'Mon', orders: 120 },
-    { day: 'Tue', orders: 145 },
-    { day: 'Wed', orders: 132 },
-    { day: 'Thu', orders: 185 },
-    { day: 'Fri', orders: 210 },
-    { day: 'Sat', orders: 75 },
-    { day: 'Sun', orders: 40 },
-  ];
+  const data = externalData && externalData.length > 0
+    ? externalData
+    : [{ day: '—', orders: 0 }];
 
   return (
     <div className="h-48 md:h-64 w-full">
@@ -240,19 +238,20 @@ export function DailyOrderVolumeChart() {
 }
 
 // Most Frequent Employee Visitors (Horizontal Bar, Cafe Analytics)
-export function FrequentVisitorsChart() {
+export function FrequentVisitorsChart({
+  data: externalData,
+}: {
+  data?: { name: string; visits: number }[];
+}) {
   const { theme } = useTheme();
   const gridColor = theme === 'dark' ? '#1E3A5F' : '#E2E8F0';
   const tooltipBg = theme === 'dark' ? '#0D1B2E' : '#1E293B';
   const tooltipText = theme === 'dark' ? '#F0F6FF' : '#F8FAFC';
 
-  const data = [
-    { name: 'Samuel Alene', visits: 24 },
-    { name: 'Hirut Kebede', visits: 19 },
-    { name: 'Mekdes Abebe', visits: 18 },
-    { name: 'Dawit Yohannes', visits: 15 },
-    { name: 'Yonas Girmay', visits: 12 },
-  ].reverse();
+  const data = (externalData && externalData.length > 0
+    ? externalData
+    : [{ name: 'No data', visits: 0 }]
+  ).slice().reverse();
 
   return (
     <div className="h-44 md:h-56 w-full">
@@ -276,19 +275,20 @@ export function FrequentVisitorsChart() {
 }
 
 // Most Ordered Items Chart (Horizontal Bar, Cafe Analytics)
-export function MostOrderedItemsChart() {
+export function MostOrderedItemsChart({
+  data: externalData,
+}: {
+  data?: { name: string; count: number }[];
+}) {
   const { theme } = useTheme();
   const gridColor = theme === 'dark' ? '#1E3A5F' : '#E2E8F0';
   const tooltipBg = theme === 'dark' ? '#0D1B2E' : '#1E293B';
   const tooltipText = theme === 'dark' ? '#F0F6FF' : '#F8FAFC';
 
-  const data = [
-    { name: 'Doro Wot', count: 185 },
-    { name: 'Beyaynetu', count: 144 },
-    { name: 'Tibs', count: 122 },
-    { name: 'Fresh Juice', count: 98 },
-    { name: 'Coffee', count: 90 },
-  ].reverse();
+  const data = (externalData && externalData.length > 0
+    ? externalData
+    : [{ name: 'No data', count: 0 }]
+  ).slice().reverse();
 
   return (
     <div className="h-44 md:h-56 w-full">
@@ -312,23 +312,19 @@ export function MostOrderedItemsChart() {
 }
 
 // Peak Order Times by Hour (Area Chart, Cafe Analytics)
-export function PeakOrderTimesChart() {
+export function PeakOrderTimesChart({
+  data: externalData,
+}: {
+  data?: { hour: string; Orders: number }[];
+}) {
   const { theme } = useTheme();
   const gridColor = theme === 'dark' ? '#1E3A5F' : '#E2E8F0';
   const tooltipBg = theme === 'dark' ? '#0D1B2E' : '#1E293B';
   const tooltipText = theme === 'dark' ? '#F0F6FF' : '#F8FAFC';
 
-  const data = [
-    { hour: '07 AM', Orders: 10 },
-    { hour: '08 AM', Orders: 35 },
-    { hour: '09 AM', Orders: 15 },
-    { hour: '11 AM', Orders: 45 },
-    { hour: '12 PM', Orders: 165 },
-    { hour: '01 PM', Orders: 195 },
-    { hour: '02 PM', Orders: 80 },
-    { hour: '04 PM', Orders: 25 },
-    { hour: '05 PM', Orders: 30 },
-  ];
+  const data = externalData && externalData.length > 0
+    ? externalData
+    : [{ hour: '—', Orders: 0 }];
 
   return (
     <div className="h-44 md:h-56 w-full">

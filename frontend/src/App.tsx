@@ -106,8 +106,21 @@ function NotFound() {
 }
 
 export default function App() {
-  const token = localStorage.getItem("token");
+  const { user, token } = useApp();
   const role = localStorage.getItem("role");
+
+  if (token && !user) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-page-bg dark:bg-primary transition-colors duration-200">
+        <div className="flex flex-col items-center space-y-4">
+          <div className="w-12 h-12 border-4 border-slate-600 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-xs font-bold text-subtle-text dark:text-slate-400 tracking-widest uppercase animate-pulse">
+            Restoring session...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>

@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import i18n from '../i18n/i18n';
 import { useTheme } from './ThemeContext';
-import { User, MenuItem, Order, Feedback, AuditLog, Message, Conversation, WaiterPerformance } from '../types';
+import { User, MenuItem } from '../types';
+import { normalizeNotification, unwrapData } from '../utils/apiMappers';
 
 interface AppContextType {
   user: User | null;
@@ -23,7 +24,7 @@ interface AppContextType {
   toggleTheme: () => void;
   setLanguage: (lang: 'en' | 'am') => void;
   login: (employeeId: string, password: string) => Promise<any>;
-  logout: () => void;
+  logout: () => void | Promise<void>;
   addToCart: (item: MenuItem) => void;
   removeFromCart: (itemId: string) => void;
   updateCartQuantity: (itemId: string, qty: number) => void;
@@ -39,10 +40,16 @@ interface AppContextType {
   apiGet: (path: string) => Promise<any>;
   apiPost: (path: string, body: any) => Promise<any>;
   apiPut: (path: string, body: any) => Promise<any>;
+  apiPatch: (path: string, body?: any) => Promise<any>;
   apiDelete: (path: string) => Promise<any>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
+
+async function parseError(response: Response): Promise<Error> {
+  const err = await response.json().catch(() => ({ message: 'API error' }));
+  return new Error(err.message || 'API error');
+}
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -60,127 +67,135 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activeCafe, setActiveCafe] = useState<any>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-  // Synced state triggers
-  const apiGet = useCallback(async (path: string) => {
-    if (isOffline) {
-      throw new Error('Offline mode active. API calls unavailable.');
-    }
+  const authHeaders = useCallback((): HeadersInit => {
     const headers: HeadersInit = { 'Content-Type': 'application/json' };
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-    const response = await fetch(path, { headers });
+    return headers;
+  }, [token]);
+
+  const handleUnauthorized = useCallback(() => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('role');
+    localStorage.removeItem('refresh_token');
+    setToken(null);
+    setUser(null);
+  }, []);
+
+  const apiGet = useCallback(async (path: string) => {
+    if (isOffline) {
+      throw new Error('Offline mode active. API calls unavailable.');
+    }
+    const response = await fetch(path, { headers: authHeaders() });
     if (response.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      setToken(null);
-      setUser(null);
+      handleUnauthorized();
       throw new Error('Your session has expired');
     }
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
-    }
+    if (!response.ok) throw await parseError(response);
     return response.json();
-  }, [token, isOffline]);
+  }, [authHeaders, handleUnauthorized, isOffline]);
 
   const apiPost = useCallback(async (path: string, body: any) => {
     if (isOffline) {
       throw new Error('Offline mode active. API calls unavailable.');
     }
-    const headers: HeadersInit = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
     const response = await fetch(path, {
       method: 'POST',
-      headers,
+      headers: authHeaders(),
       body: JSON.stringify(body)
     });
     if (response.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      setToken(null);
-      setUser(null);
+      handleUnauthorized();
       throw new Error('Your session has expired');
     }
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
-    }
+    if (!response.ok) throw await parseError(response);
     return response.json();
-  }, [token, isOffline]);
+  }, [authHeaders, handleUnauthorized, isOffline]);
 
   const apiPut = useCallback(async (path: string, body: any) => {
     if (isOffline) {
       throw new Error('Offline mode active. API calls unavailable.');
     }
-    const headers: HeadersInit = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
     const response = await fetch(path, {
       method: 'PUT',
-      headers,
+      headers: authHeaders(),
       body: JSON.stringify(body)
     });
     if (response.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      setToken(null);
-      setUser(null);
+      handleUnauthorized();
       throw new Error('Your session has expired');
     }
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
-    }
+    if (!response.ok) throw await parseError(response);
     return response.json();
-  }, [token, isOffline]);
+  }, [authHeaders, handleUnauthorized, isOffline]);
+
+  const apiPatch = useCallback(async (path: string, body: any = {}) => {
+    if (isOffline) {
+      throw new Error('Offline mode active. API calls unavailable.');
+    }
+    const response = await fetch(path, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify(body)
+    });
+    if (response.status === 401) {
+      handleUnauthorized();
+      throw new Error('Your session has expired');
+    }
+    if (!response.ok) throw await parseError(response);
+    return response.json();
+  }, [authHeaders, handleUnauthorized, isOffline]);
 
   const apiDelete = useCallback(async (path: string) => {
     if (isOffline) {
       throw new Error('Offline mode active. API calls unavailable.');
     }
-    const headers: HeadersInit = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
     const response = await fetch(path, {
       method: 'DELETE',
-      headers
+      headers: authHeaders()
     });
     if (response.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      setToken(null);
-      setUser(null);
+      handleUnauthorized();
       throw new Error('Your session has expired');
     }
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
-    }
+    if (!response.ok) throw await parseError(response);
     return response.json();
-  }, [token, isOffline]);
+  }, [authHeaders, handleUnauthorized, isOffline]);
 
-  // Auth fetch
+  const mapSessionUser = (raw: any): User => {
+    const primaryRole = raw.roles?.[0] || raw.role;
+    let role = primaryRole;
+    if (role === 'company_manager') role = 'manager';
+    if (role === 'cafe_manager') role = 'cafe';
+
+    return {
+      id: String(raw.id),
+      employeeId: raw.employeeId ?? raw.employee_external_id ?? '',
+      fullName: raw.fullName ?? raw.fullname ?? '',
+      role,
+      email: raw.email ?? '',
+      phone: raw.phone ?? raw.phone_number ?? '',
+      department: raw.department ?? '',
+      balance: Number(raw.balance ?? 0),
+      monthlyAllocation: Number(raw.monthlyAllocation ?? 0),
+      balanceTier: raw.balanceTier ?? '',
+      isActive: raw.isActive ?? raw.is_active ?? true,
+      encryptedQrToken: raw.encryptedQrToken,
+    };
+  };
+
   const fetchMe = useCallback(async () => {
     if (!token || isOffline) return;
     try {
-      const data = await apiGet('/api/auth/me');
-      const userData = { ...data.user };
-      if (userData.role === 'company_manager') userData.role = 'manager';
-      if (userData.role === 'cafe_manager') userData.role = 'cafe';
-      setUser(userData);
+      const response = await apiGet('/api/auth/me');
+      const data = unwrapData(response);
+      setUser(mapSessionUser(data.user));
     } catch (e) {
       console.error('Error fetching current user:', e);
-      setUser(null);
-      setToken(null);
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
+      handleUnauthorized();
     }
-  }, [token, apiGet, isOffline]);
+  }, [token, apiGet, isOffline, handleUnauthorized]);
 
   useEffect(() => {
     if (token) {
@@ -188,14 +203,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [token, fetchMe]);
 
-  // Listen to offline/online events
   useEffect(() => {
-    const handleOnline = () => {
-      setIsOffline(false);
-    };
-    const handleOffline = () => {
-      setIsOffline(true);
-    };
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     return () => {
@@ -204,13 +214,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Fetch notifications
   const fetchNotifications = useCallback(async () => {
     if (!token || isOffline) return;
     try {
-      const data = await apiGet('/api/notifications');
-      setNotifications(data.notifications || []);
-      setUnreadCount((data.notifications || []).filter((n: any) => !n.read).length);
+      const response = await apiGet('/api/notifications?limit=50');
+      const data = unwrapData(response);
+      const items = (data.items ?? data.notifications ?? []).map(normalizeNotification);
+      setNotifications(items);
+      setUnreadCount(items.filter((n: any) => !n.read).length);
     } catch (e) {
       console.error('Error loading notifications', e);
     }
@@ -219,15 +230,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (token) {
       fetchNotifications();
-      // Setup dynamic poll for live updates
       const interval = setInterval(() => {
         fetchNotifications();
       }, 7000);
       return () => clearInterval(interval);
     }
   }, [token, fetchNotifications]);
-
-  // Theme is handled in ThemeContext
 
   const setLanguage = (lang: 'en' | 'am') => {
     setLangState(lang);
@@ -238,31 +246,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const login = async (employeeId: string, password: string): Promise<any> => {
     setGlobalLoading(true);
     try {
-      const data = await apiPost('/api/auth/login', { employeeId, password });
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('role', data.role);
-      setToken(data.token);
+      const response = await apiPost('/api/auth/login', { employee_external_id: employeeId, password });
+      const { token: userToken, refresh_token, user: rawUser } = unwrapData(response);
       
-      const userData = { ...data.user };
-      if (userData.role === 'company_manager') userData.role = 'manager';
-      if (userData.role === 'cafe_manager') userData.role = 'cafe';
-      setUser(userData);
+      localStorage.setItem('token', userToken);
+      localStorage.setItem('refresh_token', refresh_token);
+      
+      const clientRole = rawUser.roles?.[0] || rawUser.role;
+      localStorage.setItem('role', clientRole);
+      
+      setToken(userToken);
+      setUser(mapSessionUser({ ...rawUser, role: clientRole }));
       
       setGlobalLoading(false);
-      return data;
+      return { token: userToken, role: clientRole, user: mapSessionUser({ ...rawUser, role: clientRole }) };
     } catch (e) {
       setGlobalLoading(false);
       throw e;
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    const refreshToken = localStorage.getItem('refresh_token');
+    try {
+      if (refreshToken) {
+        await apiPost('/api/auth/logout', { refresh_token: refreshToken });
+      }
+    } catch (e) {
+      console.error('Error logging out from backend:', e);
+    }
     localStorage.removeItem('token');
+    localStorage.removeItem('refresh_token');
     localStorage.removeItem('role');
     setToken(null);
     setUser(null);
     setCart([]);
     setActiveCafe(null);
+    setNotifications([]);
+    setUnreadCount(0);
   };
 
   const addToCart = (item: MenuItem) => {
@@ -303,7 +324,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const markNotificationsAsRead = async () => {
     if (!token || isOffline) return;
     try {
-      await apiPost('/api/notifications/read-all', {});
+      await apiPatch('/api/notifications/read-all', {});
       setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
       setUnreadCount(0);
     } catch (e) {
@@ -317,16 +338,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('esrom_offline_queue', JSON.stringify(queue));
   };
 
-  // Sync waiter offline queue
+  // Replay queued waiter orders when back online (one-by-one against /api/waiter/order)
   const triggerSync = async () => {
     if (offlineQueue.length === 0 || isOffline) return;
     setGlobalLoading(true);
     try {
-      const response = await apiPost('/api/waiter/sync-orders', { orders: offlineQueue });
-      setOfflineQueue([]);
-      localStorage.setItem('esrom_offline_queue', '[]');
+      const remaining: any[] = [];
+      for (const order of offlineQueue) {
+        try {
+          await apiPost('/api/waiter/order', order);
+        } catch (e) {
+          remaining.push(order);
+        }
+      }
+      setOfflineQueue(remaining);
+      localStorage.setItem('esrom_offline_queue', JSON.stringify(remaining));
       setGlobalLoading(false);
       fetchNotifications();
+      if (remaining.length > 0) {
+        throw new Error(`${remaining.length} offline order(s) could not be synced`);
+      }
     } catch (e) {
       console.error('Sync failed:', e);
       setGlobalLoading(false);
@@ -334,12 +365,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Auto-sync when online restores
   useEffect(() => {
     if (!isOffline && offlineQueue.length > 0 && token) {
       triggerSync().catch(console.error);
     }
-  }, [isOffline, offlineQueue, token]);
+  }, [isOffline]);
 
   const refreshData = async () => {
     await fetchMe();
@@ -380,6 +410,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         apiGet,
         apiPost,
         apiPut,
+        apiPatch,
         apiDelete
       }}
     >

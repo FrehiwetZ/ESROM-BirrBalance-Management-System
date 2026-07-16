@@ -2,6 +2,7 @@ import prisma from "../config/db.js";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
 import { comparePassword, generateToken, hashPassword } from "../services/auth.service.js";
+import { getEmployeeCurrentMonthSummary } from "../services/balance.service.js";
 import {
   generateRefreshToken,
   revokeRefreshToken,
@@ -236,4 +237,51 @@ export const confirmPasswordReset = asyncHandler(async (req, res) => {
   });
 
   return successResponse(res, null, "Password reset successfully");
+});
+
+export const getMe = asyncHandler(async (req, res) => {
+  const user = await prisma.users.findUnique({
+    where: { id: req.user.id },
+    include: {
+      departments: true,
+      user_roles: {
+        include: { roles: true },
+      },
+    },
+  });
+
+  if (!user || !user.is_active) {
+    throw new AppError("User not found or inactive", 401);
+  }
+
+  const roles = user.user_roles.map((ur) => ur.roles.name);
+  const primaryRole = roles[0] || 'employee';
+
+  let balance = 0;
+  let monthlyAllocation = 0;
+
+  if (primaryRole === 'employee') {
+    const summary = await getEmployeeCurrentMonthSummary(user.id);
+    balance = summary.remaining;
+    monthlyAllocation = summary.allocated;
+  }
+
+  const userResponse = {
+    id: user.id,
+    employeeId: user.employee_external_id,
+    employee_external_id: user.employee_external_id,
+    fullName: user.fullname,
+    fullname: user.fullname,
+    role: primaryRole,
+    roles,
+    email: user.email || '',
+    phone: user.phone_number || '',
+    phone_number: user.phone_number || '',
+    department: user.departments?.name || '',
+    balance,
+    monthlyAllocation,
+    isActive: user.is_active,
+  };
+
+  return successResponse(res, { user: userResponse }, "Session user fetched successfully");
 });

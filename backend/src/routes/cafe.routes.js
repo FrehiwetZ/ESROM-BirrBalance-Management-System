@@ -4,6 +4,7 @@ import {
   cafeAnalytics,
   cafeOperationalReport,
   editMenuItem,
+  listCafeOrders,
   listMenuItems,
   markMenuItemAvailability,
   removeMenuItem,
@@ -22,6 +23,7 @@ router.patch("/menu/:id", uploadMenuImage.single("image"), editMenuItem);
 router.delete("/menu/:id", removeMenuItem);
 router.patch("/menu/:id/availability", markMenuItemAvailability);
 
+router.get("/orders", listCafeOrders);
 router.get("/analytics", cafeAnalytics);
 router.get("/reports/operational", cafeOperationalReport);
 

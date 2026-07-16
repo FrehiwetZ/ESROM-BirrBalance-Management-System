@@ -4,6 +4,7 @@ import { ROLES } from "../config/constants.js";
 import {
   scanQR,
   createOfflineOrder,
+  listWaiterMenu,
 } from "../controllers/waiter.controller.js";
 
 const router = express.Router();
@@ -11,6 +12,7 @@ const router = express.Router();
 router.use(authenticate);
 router.use(requireRole(ROLES.WAITER));
 
+router.get("/menu", listWaiterMenu);
 router.post("/scan", scanQR);
 router.post("/order", createOfflineOrder);
 

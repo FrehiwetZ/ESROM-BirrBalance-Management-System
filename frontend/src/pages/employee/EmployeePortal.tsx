@@ -1,16 +1,20 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../../context/AppContext';
 import { useTranslation } from 'react-i18next';
 import { formatETB } from '../../utils/format';
+import {
+  normalizeMenuItem,
+  normalizeOrder,
+  normalizeCafe,
+  unwrapData,
+} from '../../utils/apiMappers';
 import jsPDF from 'jspdf';
 import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
 import EmployeeNotificationsPage from './EmployeeNotificationsPage';
 import {
   Wallet,
-  QrCode,
   Flame,
-  Clock,
   ChevronRight,
   ShoppingBag,
   Plus,
@@ -19,28 +23,29 @@ import {
   CheckCircle,
   AlertTriangle,
   History,
-  User as UserIcon,
-  LogOut,
   Send,
   Star,
   Search,
-  Calendar,
   Download,
   ChevronLeft,
-  ArrowUpRight,
-  ArrowDownLeft,
   TrendingUp,
   TrendingDown,
   Printer
 } from 'lucide-react';
 
-export default function EmployeePortal() {
-  const { user, apiGet, apiPost, apiPut, setGlobalLoading, refreshData } = useApp();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const { t } = useTranslation();
+const CAFE_STORAGE_KEY = 'activeCafeId';
 
-  // Active sub tab
+function formatAllocationMonth(month: string | Date | null | undefined): string {
+  if (!month) return 'Unknown';
+  const d = new Date(month);
+  if (Number.isNaN(d.getTime())) return String(month);
+  return d.toLocaleString('default', { month: 'long', year: 'numeric' });
+}
+
+export default function EmployeePortal() {
+  const { user, apiGet, apiPost, refreshData } = useApp();
+  const location = useLocation();
+
   const getActiveTab = () => {
     const path = location.pathname;
     if (path.includes('orders') || path.includes('order')) return 'orders';
@@ -52,34 +57,129 @@ export default function EmployeePortal() {
 
   const activeTab = getActiveTab();
 
-  // States
   const [menuItems, setMenuItems] = useState<any[]>([]);
   const [myOrders, setMyOrders] = useState<any[]>([]);
   const [allocationHistory, setAllocationHistory] = useState<any[]>([]);
+  const [cafes, setCafes] = useState<any[]>([]);
+  const [selectedCafeId, setSelectedCafeId] = useState<string>(
+    () => localStorage.getItem(CAFE_STORAGE_KEY) || ''
+  );
+  const [menuLoading, setMenuLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [toast, setToast] = useState<{ type: 'success' | 'error' | 'warning', message: string } | null>(null);
 
-  const loadEmployeeData = async () => {
-    try {
-      const itemsData = await apiGet('/api/menu');
-      setMenuItems(itemsData.menuItems.filter((i: any) => i.available));
-
-      const ordersData = await apiGet('/api/orders/my-orders');
-      setMyOrders(ordersData.orders);
-
-      const profileData = await apiGet('/api/employees/me/profile');
-      setAllocationHistory(profileData.allocations || []);
-    } catch (e) {
-      console.error('Error loading employee portal data', e);
+  const loadMenuForCafe = useCallback(async (cafeId: string) => {
+    if (!cafeId) {
+      setMenuItems([]);
+      return;
     }
-  };
+    setMenuLoading(true);
+    try {
+      const menuRes = await apiGet(`/api/employee/menu?cafe_id=${cafeId}`);
+      const menuData = unwrapData(menuRes);
+      const menuList = Array.isArray(menuData) ? menuData : (menuData?.items ?? []);
+      setMenuItems(menuList.map(normalizeMenuItem).filter((i: any) => i.available));
+    } catch (e: any) {
+      console.error('Error loading menu', e);
+      setMenuItems([]);
+      throw e;
+    } finally {
+      setMenuLoading(false);
+    }
+  }, [apiGet]);
+
+  const loadEmployeeData = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [ordersRes, profileRes, cafesRes] = await Promise.all([
+        apiGet('/api/employee/orders?limit=100'),
+        apiGet('/api/employee/profile'),
+        apiGet('/api/employee/cafes'),
+      ]);
+
+      const ordersData = unwrapData(ordersRes);
+      const orderList = Array.isArray(ordersData)
+        ? ordersData
+        : (ordersData?.items ?? ordersData?.orders ?? []);
+      setMyOrders(orderList.map(normalizeOrder));
+
+      const profile = unwrapData(profileRes);
+      const rawAllocations =
+        profile?.monthly_allocations_monthly_allocations_user_idTousers ?? [];
+      setAllocationHistory(
+        rawAllocations.map((a: any) => ({
+          id: String(a.id),
+          amount: Number(a.amount),
+          month: a.allocation_month,
+          date: a.created_at,
+        }))
+      );
+
+      const cafesData = unwrapData(cafesRes);
+      const cafeList = (Array.isArray(cafesData) ? cafesData : []).map(normalizeCafe);
+      setCafes(cafeList);
+
+      let cafeId = localStorage.getItem(CAFE_STORAGE_KEY) || selectedCafeId || '';
+      if (!cafeId || !cafeList.some((c: any) => c.id === cafeId)) {
+        cafeId = cafeList[0]?.id || '';
+      }
+      if (cafeId) {
+        setSelectedCafeId(cafeId);
+        localStorage.setItem(CAFE_STORAGE_KEY, cafeId);
+        await loadMenuForCafe(cafeId);
+      } else {
+        setMenuItems([]);
+      }
+    } catch (e: any) {
+      console.error('Error loading employee portal data', e);
+      setError(e?.message || 'Failed to load employee data');
+    } finally {
+      setLoading(false);
+    }
+  }, [apiGet, loadMenuForCafe, selectedCafeId]);
+
+  const handleCafeChange = useCallback(async (cafeId: string) => {
+    setSelectedCafeId(cafeId);
+    localStorage.setItem(CAFE_STORAGE_KEY, cafeId);
+    try {
+      await loadMenuForCafe(cafeId);
+    } catch (e: any) {
+      setToast({ type: 'error', message: e?.message || 'Failed to load menu for this café' });
+    }
+  }, [loadMenuForCafe]);
 
   useEffect(() => {
     if (user && user.role === 'employee') {
       loadEmployeeData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, location.pathname]);
 
   if (!user || user.role !== 'employee') return null;
+
+  if (loading) {
+    return (
+      <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 md:py-10 font-sans">
+        <p className="text-sm font-bold text-subtle-text">Loading employee data…</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 md:py-10 font-sans space-y-4">
+        <p className="text-sm font-bold text-danger">{error}</p>
+        <button
+          onClick={() => loadEmployeeData()}
+          className="px-4 py-2 bg-primary text-white text-xs font-bold rounded-xl"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 md:py-10 space-y-8 font-sans relative">
@@ -96,6 +196,10 @@ export default function EmployeePortal() {
           user={user}
           menuItems={menuItems}
           myOrders={myOrders}
+          cafes={cafes}
+          selectedCafeId={selectedCafeId}
+          onCafeChange={handleCafeChange}
+          menuLoading={menuLoading}
           onReload={loadEmployeeData}
           apiPost={apiPost}
           setToast={setToast}
@@ -107,7 +211,6 @@ export default function EmployeePortal() {
         <EmployeeProfilePage
           user={user}
           allocationHistory={allocationHistory}
-          apiPut={apiPut}
         />
       )}
       {activeTab === 'transactions' && (
@@ -115,6 +218,7 @@ export default function EmployeePortal() {
           user={user}
           myOrders={myOrders}
           allocationHistory={allocationHistory}
+          cafes={cafes}
         />
       )}
       {activeTab === 'notifications' && (
@@ -162,15 +266,34 @@ function EmployeeDashboard({
   allocationHistory: any[];
 }) {
   const { t } = useTranslation();
+  const { apiPost } = useApp();
   const employee = user ? {
     ...user,
     firstName: user.fullName ? user.fullName.split(' ')[0] : ''
   } : null;
   const navigate = useNavigate();
+  const [qrToken, setQrToken] = useState(user.encryptedQrToken || '');
 
-  // Dynamic low balance check
-  const monthlyAllowance = allocationHistory && allocationHistory.length > 0 ? allocationHistory[0].amount : 1000;
-  const isLowBalance = user.balance < (monthlyAllowance * 0.2);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiPost('/api/employee/generate-qr', {});
+        const data = unwrapData(res);
+        if (!cancelled && data?.qr_token) {
+          setQrToken(data.qr_token);
+        }
+      } catch (e) {
+        console.error('Error generating QR token', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [apiPost]);
+
+  const monthlyAllowance =
+    Number(user.monthlyAllocation) ||
+    (allocationHistory && allocationHistory.length > 0 ? Number(allocationHistory[0].amount) : 0);
+  const isLowBalance = monthlyAllowance > 0 && user.balance < (monthlyAllowance * 0.2);
 
   const downloadPNG = () => {
     const canvas = document.querySelector('#employee-qr-canvas') as HTMLCanvasElement;
@@ -387,7 +510,7 @@ function EmployeeDashboard({
           <div className="p-3 bg-white border border-slate-200 rounded-3xl flex items-center justify-center overflow-hidden shadow-inner">
             <QRCodeCanvas
               id="employee-qr-canvas"
-              value={user.encryptedQrToken || ''}
+              value={qrToken || ''}
               size={220}
               bgColor="#FFFFFF"
               fgColor="#0A1628"
@@ -397,7 +520,7 @@ function EmployeeDashboard({
             />
             <QRCodeSVG
               id="employee-qr-svg"
-              value={user.encryptedQrToken || ''}
+              value={qrToken || ''}
               size={220}
               level="H"
               bgColor="#FFFFFF"
@@ -493,29 +616,33 @@ function EmployeeDashboard({
           </div>
 
           <div className="space-y-3">
-            {myOrders.slice(0, 3).map((item) => (
-              <div key={item.id} className="p-3 hover:bg-slate-50 rounded-2xl border border-slate-50 flex justify-between items-center transition-all">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center">
-                    <History className="w-4 h-4 text-slate-500" />
+            {myOrders.length === 0 ? (
+              <p className="text-xs text-subtle-text py-6 text-center">No recent orders yet.</p>
+            ) : (
+              myOrders.slice(0, 3).map((item) => (
+                <div key={item.id} className="p-3 hover:bg-slate-50 rounded-2xl border border-slate-50 flex justify-between items-center transition-all">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center">
+                      <History className="w-4 h-4 text-slate-500" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-primary max-w-xs truncate">
+                        {(item.items || []).map((i: any) => `${i.name} (x${i.quantity})`).join(', ') || 'Order'}
+                      </h4>
+                      <span className="text-[10px] text-slate-400">{new Date(item.date).toLocaleDateString()} &bull; {item.cafe || item.location || 'Café'}</span>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-primary max-w-xs truncate">
-                      {item.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', ')}
-                    </h4>
-                    <span className="text-[10px] text-slate-400">{new Date(item.date).toLocaleDateString()} &bull; Main Cafeteria</span>
+                  <div className="text-right">
+                    <span className="text-xs font-black text-danger block">-{formatETB(item.amount)}</span>
+                    <span className={`inline-block text-[9px] font-bold uppercase ${
+                      item.status === 'confirmed' || item.status === 'completed' ? 'text-success' : 'text-warning'
+                    }`}>
+                      {item.status}
+                    </span>
                   </div>
                 </div>
-                <div className="text-right">
-                  <span className="text-xs font-black text-danger block">-{formatETB(item.amount)}</span>
-                  <span className={`inline-block text-[9px] font-bold uppercase ${
-                    item.status === 'confirmed' ? 'text-success' : 'text-warning'
-                  }`}>
-                    {item.status}
-                  </span>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 
@@ -530,6 +657,10 @@ function EmployeeDashboard({
 function EmployeePlaceOrder({
   user,
   menuItems,
+  cafes,
+  selectedCafeId,
+  onCafeChange,
+  menuLoading,
   onReload,
   apiPost,
   setToast,
@@ -538,6 +669,10 @@ function EmployeePlaceOrder({
 }: {
   user: any;
   menuItems: any[];
+  cafes: any[];
+  selectedCafeId: string;
+  onCafeChange: (cafeId: string) => Promise<void>;
+  menuLoading: boolean;
   onReload: () => Promise<void>;
   apiPost: (path: string, body: any) => Promise<any>;
   setToast: (toast: any) => void;
@@ -548,29 +683,29 @@ function EmployeePlaceOrder({
   const [successOrder, setSuccessOrder] = useState<any | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Ratings for feedback
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState('');
   const [feedbackSent, setFeedbackSent] = useState(false);
 
   const [activeCat, setActiveCat] = useState<'All' | 'Food' | 'Beverage' | 'Snack'>('All');
 
-  // Persistent Active Cafe Selector State
-  const [activeCafe, setActiveCafe] = useState<string>(() => {
-    return localStorage.getItem('activeCafe') || 'Main Corporate Cafe';
-  });
+  const uniqueCategories = Array.from(
+    new Set(menuItems.map((i) => i.category || 'Food'))
+  ) as string[];
+  const showCategoryFilter = uniqueCategories.length > 1;
 
-  const handleCafeChange = (cafeName: string) => {
-    setActiveCafe(cafeName);
-    localStorage.setItem('activeCafe', cafeName);
+  const handleCafeChange = async (cafeId: string) => {
+    setCart([]);
+    await onCafeChange(cafeId);
   };
 
-  const monthlyAllowance = allocationHistory && allocationHistory.length > 0 ? allocationHistory[0].amount : 1000;
-  const isLowBalance = user.balance < (monthlyAllowance * 0.2);
+  const monthlyAllowance =
+    Number(user.monthlyAllocation) ||
+    (allocationHistory && allocationHistory.length > 0 ? Number(allocationHistory[0].amount) : 0);
+  const isLowBalance = monthlyAllowance > 0 && user.balance < (monthlyAllowance * 0.2);
 
-  // Filter items
-  const filteredItems = menuItems.filter(item => {
-    if (activeCat === 'All') return true;
+  const filteredItems = menuItems.filter((item) => {
+    if (!showCategoryFilter || activeCat === 'All') return true;
     return item.category === activeCat;
   });
 
@@ -605,6 +740,10 @@ function EmployeePlaceOrder({
 
   const handleCheckout = async () => {
     const total = getCartTotal();
+    if (!selectedCafeId) {
+      setToast({ type: 'error', message: 'Please select a cafeteria before ordering.' });
+      return;
+    }
     if (total > user.balance) {
       setToast({ type: 'error', message: "Overdraft! You don't have enough ETB to pay for this meal tray." });
       return;
@@ -612,40 +751,40 @@ function EmployeePlaceOrder({
 
     setIsSubmitting(true);
     try {
-      const formattedItems = cart.map(c => ({
-        itemId: c.item.id,
-        name: c.item.name,
-        quantity: c.quantity,
-        price: Number(c.item.price)
-      }));
-
-      const res = await apiPost('/api/orders', {
-        items: formattedItems,
-        amount: total,
-        location: activeCafe
+      const res = await apiPost('/api/employee/orders', {
+        cafe_id: Number(selectedCafeId),
+        items: cart.map((c) => ({
+          menu_item_id: Number(c.item.id),
+          quantity: c.quantity,
+        })),
       });
 
-      // Clear tray
+      const data = unwrapData(res);
+      const remaining = Number(data.remaining_balance ?? user.balance - total);
+      const orderAmount = Number(data.total_amount ?? total);
+
       setCart([]);
-      
-      // Real-time balance refetch in AppContext
       await refreshData();
       await onReload();
 
-      setSuccessOrder(res.order);
-
-      // Trigger beautiful real-time success toast
-      setToast({
-        type: 'success',
-        message: `${formatETB(total)} deducted. Remaining: ${formatETB(user.balance - total)}`
+      setSuccessOrder({
+        id: data.order_id ?? data.order_uuid,
+        orderUuid: data.order_uuid,
+        amount: orderAmount,
+        remainingBalance: remaining,
+        cafeId: Number(selectedCafeId),
       });
 
-      // Trigger amber warning toast if balance drops below 20%
-      if ((user.balance - total) < (monthlyAllowance * 0.2)) {
+      setToast({
+        type: 'success',
+        message: `${formatETB(orderAmount)} deducted. Remaining: ${formatETB(remaining)}`
+      });
+
+      if (monthlyAllowance > 0 && remaining < (monthlyAllowance * 0.2)) {
         setTimeout(() => {
           setToast({
             type: 'warning',
-            message: `Your balance is running low. ${formatETB(user.balance - total)} remaining`
+            message: `Your balance is running low. ${formatETB(remaining)} remaining`
           });
         }, 3000);
       }
@@ -664,10 +803,10 @@ function EmployeePlaceOrder({
     if (!successOrder) return;
 
     try {
-      await apiPost('/api/feedback', {
-        orderId: successOrder.id,
+      await apiPost('/api/employee/feedback', {
         rating,
-        comment
+        comment: comment || undefined,
+        cafe_id: successOrder.cafeId ? Number(successOrder.cafeId) : undefined,
       });
       setFeedbackSent(true);
       setTimeout(() => {
@@ -676,8 +815,8 @@ function EmployeePlaceOrder({
         setComment('');
         setRating(5);
       }, 3000);
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      setToast({ type: 'error', message: e?.message || 'Failed to submit feedback' });
     }
   };
 
@@ -695,13 +834,18 @@ function EmployeePlaceOrder({
           <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Cafeteria:</span>
           <select
             id="cafe-selector"
-            value={activeCafe}
+            value={selectedCafeId}
             onChange={(e) => handleCafeChange(e.target.value)}
+            disabled={cafes.length === 0}
             className="text-xs font-black text-primary bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent dark:text-white shadow-sm cursor-pointer min-h-[44px]"
           >
-            <option value="Main Corporate Cafe">🏢 Main Corporate Cafe</option>
-            <option value="Annex Building Cafe">🏬 Annex Building Cafe</option>
-            <option value="IT Plaza Cafe">💻 IT Plaza Cafe</option>
+            {cafes.length === 0 ? (
+              <option value="">No cafés available</option>
+            ) : (
+              cafes.map((cafe) => (
+                <option key={cafe.id} value={cafe.id}>{cafe.name}</option>
+              ))
+            )}
           </select>
         </div>
       </div>
@@ -729,7 +873,7 @@ function EmployeePlaceOrder({
             </div>
             <div className="flex justify-between font-mono pt-1.5 border-t">
               <span>Remaining ETB:</span>
-              <span className="font-bold text-success">{formatETB(user.balance)}</span>
+              <span className="font-bold text-success">{formatETB(successOrder.remainingBalance ?? user.balance)}</span>
             </div>
           </div>
 
@@ -799,55 +943,66 @@ function EmployeePlaceOrder({
           
           {/* Menu listing (8 columns) */}
           <div className="lg:col-span-8 space-y-6">
-            {/* Category tabs */}
-            <div className="flex gap-1.5 bg-white p-1 rounded-2xl border border-slate-100 shadow-sm w-max">
-              {['All', 'Food', 'Beverage', 'Snack'].map((cat) => (
-                <button
-                  id={`menu-cat-tab-${cat.toLowerCase()}`}
-                  key={cat}
-                  onClick={() => setActiveCat(cat as any)}
-                  className={`px-4 py-2 text-xs font-bold rounded-xl transition-all ${
-                    activeCat === cat
-                      ? 'bg-primary text-white shadow-sm'
-                      : 'text-subtle-text hover:text-dark-text'
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
+            {/* Category tabs — only when backend provides distinct categories */}
+            {showCategoryFilter && (
+              <div className="flex gap-1.5 bg-white p-1 rounded-2xl border border-slate-100 shadow-sm w-max">
+                {['All', ...uniqueCategories].map((cat) => (
+                  <button
+                    id={`menu-cat-tab-${cat.toLowerCase()}`}
+                    key={cat}
+                    onClick={() => setActiveCat(cat as any)}
+                    className={`px-4 py-2 text-xs font-bold rounded-xl transition-all ${
+                      activeCat === cat
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-subtle-text hover:text-dark-text'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            )}
 
-            {/* Dishes grid */}
-            <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-4 gap-3 md:gap-6">
-              {filteredItems.map((item) => (
-                <div key={item.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between group hover:shadow-md transition-all">
-                  <div className="h-32 bg-slate-100 overflow-hidden relative">
-                    <img
-                      src={item.photo || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=300&auto=format&fit=crop'}
-                      alt={item.name}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                  </div>
-                  <div className="p-4 space-y-3 flex-1 flex flex-col justify-between">
-                    <div className="space-y-1">
-                      <div className="flex justify-between items-start gap-1">
-                        <h4 className="text-xs font-black text-primary line-clamp-1">{item.name}</h4>
-                        <span className="text-[11px] font-black text-secondary flex-shrink-0">{formatETB(item.price)}</span>
-                      </div>
-                      <p className="text-[10px] text-subtle-text line-clamp-2 leading-relaxed">{item.description}</p>
+            {menuLoading ? (
+              <p className="text-sm font-bold text-subtle-text py-12 text-center">Loading menu…</p>
+            ) : filteredItems.length === 0 ? (
+              <div className="py-16 text-center space-y-2">
+                <ShoppingBag className="w-8 h-8 mx-auto text-slate-300" />
+                <p className="text-sm font-bold text-primary">No menu items available</p>
+                <p className="text-xs text-subtle-text">Try another cafeteria or check back later.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-4 gap-3 md:gap-6">
+                {filteredItems.map((item) => (
+                  <div key={item.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between group hover:shadow-md transition-all">
+                    <div className="h-32 bg-slate-100 overflow-hidden relative">
+                      <img
+                        src={item.photo || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=300&auto=format&fit=crop'}
+                        alt={item.name}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
                     </div>
-                    <button
-                      id={`btn-add-cart-${item.id}`}
-                      onClick={() => addToCart(item)}
-                      className="w-full py-2 bg-slate-50 hover:bg-primary border border-slate-100 group-hover:border-primary hover:text-white rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all"
-                    >
-                      Add to Tray
-                    </button>
+                    <div className="p-4 space-y-3 flex-1 flex flex-col justify-between">
+                      <div className="space-y-1">
+                        <div className="flex justify-between items-start gap-1">
+                          <h4 className="text-xs font-black text-primary line-clamp-1">{item.name}</h4>
+                          <span className="text-[11px] font-black text-secondary flex-shrink-0">{formatETB(item.price)}</span>
+                        </div>
+                        <p className="text-[10px] text-subtle-text line-clamp-2 leading-relaxed">{item.description}</p>
+                      </div>
+                      <button
+                        id={`btn-add-cart-${item.id}`}
+                        onClick={() => addToCart(item)}
+                        className="w-full py-2 bg-slate-50 hover:bg-primary border border-slate-100 group-hover:border-primary hover:text-white rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all"
+                      >
+                        Add to Tray
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Tray checkout Panel (4 columns) */}
@@ -923,7 +1078,7 @@ function EmployeePlaceOrder({
                 <button
                   id="checkout-submit-btn"
                   onClick={handleCheckout}
-                  disabled={getCartTotal() > user.balance || isSubmitting}
+                  disabled={getCartTotal() > user.balance || isSubmitting || !selectedCafeId}
                   className="w-full py-3.5 bg-primary hover:bg-secondary text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md disabled:opacity-45 disabled:hover:bg-primary min-h-[44px] flex items-center justify-center gap-2"
                 >
                   {isSubmitting ? (
@@ -964,62 +1119,71 @@ function EmployeeOrdersHistory({ myOrders }: { myOrders: any[] }) {
       </div>
 
       <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-        <div className="table-container relative">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-slate-100 text-[10px] font-bold text-subtle-text uppercase tracking-wider bg-slate-50/50">
-                <th className="py-4 px-3 text-center md:hidden w-10"></th>
-                <th className="py-4 px-6">Order ID</th>
-                <th className="py-4 px-4 hidden md:table-cell">Items Summary</th>
-                <th className="py-4 px-4 text-right">ETB Used</th>
-                <th className="py-4 px-4 text-center">Status</th>
-                <th className="py-4 px-4 hidden md:table-cell">Waiter Name</th>
-                <th className="py-4 px-6">Transaction Date</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {myOrders.map(item => {
-                const isExpanded = !!expandedRows[item.id];
-                return (
-                  <React.Fragment key={item.id}>
-                    <tr className="hover:bg-slate-50/40 transition-colors">
-                      <td className="py-3 px-3 text-center md:hidden">
-                        <button
-                          onClick={() => toggleRow(item.id)}
-                          className="p-1.5 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 font-extrabold text-xs cursor-pointer"
-                        >
-                          {isExpanded ? '−' : '+'}
-                        </button>
-                      </td>
-                      <td className="py-3 px-6 font-mono font-bold text-primary">{item.id}</td>
-                      <td className="py-3 px-4 font-semibold text-primary max-w-sm truncate hidden md:table-cell" title={item.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', ')}>
-                        {item.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', ')}
-                      </td>
-                      <td className="py-3 px-4 text-right font-extrabold text-danger">-{formatETB(item.amount)}</td>
-                      <td className="py-3 px-4 text-center">
-                        <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                          item.status === 'confirmed' ? 'bg-green-50 text-success' : 'bg-amber-50 text-warning'
-                        }`}>
-                          {item.status}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 font-semibold hidden md:table-cell">{item.waiterName || 'Staff'}</td>
-                      <td className="py-3 px-6 text-slate-400 font-semibold">{new Date(item.date).toLocaleString()}</td>
-                    </tr>
-                    {isExpanded && (
-                      <tr className="bg-slate-50/50 md:hidden">
-                        <td colSpan={5} className="py-3 px-6 text-[11px] text-slate-600 space-y-1">
-                          <p><strong>Items:</strong> {item.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', ')}</p>
-                          <p><strong>Server/Waiter:</strong> {item.waiterName || 'Staff'}</p>
+        {myOrders.length === 0 ? (
+          <div className="p-16 text-center space-y-2">
+            <History className="w-8 h-8 mx-auto text-slate-300" />
+            <p className="text-sm font-bold text-primary">No orders yet</p>
+            <p className="text-xs text-subtle-text">Your cafeteria order history will appear here.</p>
+          </div>
+        ) : (
+          <div className="table-container relative">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-slate-100 text-[10px] font-bold text-subtle-text uppercase tracking-wider bg-slate-50/50">
+                  <th className="py-4 px-3 text-center md:hidden w-10"></th>
+                  <th className="py-4 px-6">Order ID</th>
+                  <th className="py-4 px-4 hidden md:table-cell">Items Summary</th>
+                  <th className="py-4 px-4 text-right">ETB Used</th>
+                  <th className="py-4 px-4 text-center">Status</th>
+                  <th className="py-4 px-4 hidden md:table-cell">Waiter Name</th>
+                  <th className="py-4 px-6">Transaction Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {myOrders.map(item => {
+                  const isExpanded = !!expandedRows[item.id];
+                  return (
+                    <React.Fragment key={item.id}>
+                      <tr className="hover:bg-slate-50/40 transition-colors">
+                        <td className="py-3 px-3 text-center md:hidden">
+                          <button
+                            onClick={() => toggleRow(item.id)}
+                            className="p-1.5 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 font-extrabold text-xs cursor-pointer"
+                          >
+                            {isExpanded ? '−' : '+'}
+                          </button>
                         </td>
+                        <td className="py-3 px-6 font-mono font-bold text-primary">{item.id}</td>
+                        <td className="py-3 px-4 font-semibold text-primary max-w-sm truncate hidden md:table-cell" title={(item.items || []).map((i: any) => `${i.name} (x${i.quantity})`).join(', ')}>
+                          {(item.items || []).map((i: any) => `${i.name} (x${i.quantity})`).join(', ')}
+                        </td>
+                        <td className="py-3 px-4 text-right font-extrabold text-danger">-{formatETB(item.amount)}</td>
+                        <td className="py-3 px-4 text-center">
+                          <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                            item.status === 'confirmed' || item.status === 'completed' ? 'bg-green-50 text-success' : 'bg-amber-50 text-warning'
+                          }`}>
+                            {item.status}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 font-semibold hidden md:table-cell">{item.waiterName || 'Staff'}</td>
+                        <td className="py-3 px-6 text-slate-400 font-semibold">{new Date(item.date).toLocaleString()}</td>
                       </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      {isExpanded && (
+                        <tr className="bg-slate-50/50 md:hidden">
+                          <td colSpan={5} className="py-3 px-6 text-[11px] text-slate-600 space-y-1">
+                            <p><strong>Items:</strong> {(item.items || []).map((i: any) => `${i.name} (x${i.quantity})`).join(', ')}</p>
+                            <p><strong>Server/Waiter:</strong> {item.waiterName || 'Staff'}</p>
+                            <p><strong>Café:</strong> {item.cafe || item.location || '—'}</p>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1030,51 +1194,11 @@ function EmployeeOrdersHistory({ myOrders }: { myOrders: any[] }) {
 // -----------------------------------------------------------
 function EmployeeProfilePage({
   user,
-  allocationHistory,
-  apiPut
+  allocationHistory
 }: {
   user: any;
   allocationHistory: any[];
-  apiPut: (path: string, body: any) => Promise<any>;
 }) {
-  const [oldPassword, setOldPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [passError, setPassError] = useState('');
-  const [passSuccess, setPassSuccess] = useState('');
-
-  const handleUpdatePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!oldPassword.trim() || !newPassword.trim() || !confirmPassword.trim()) {
-      setPassError('All password fields are required.');
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      setPassError('New passwords do not match.');
-      return;
-    }
-
-    try {
-      await apiPut('/api/employees/me/update-password', {
-        oldPassword,
-        newPassword
-      });
-
-      setPassSuccess('Password updated successfully!');
-      setPassError('');
-      setOldPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-
-      setTimeout(() => {
-        setPassSuccess('');
-      }, 5000);
-    } catch (err: any) {
-      setPassError(err.message || 'Error updating password.');
-    }
-  };
-
   return (
     <div className="space-y-6 animate-fadeIn text-xs">
       {/* Header */}
@@ -1084,84 +1208,44 @@ function EmployeeProfilePage({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left column (Profile overview and Password edit form) */}
+        {/* Left column (Profile overview and Password info) */}
         <div className="lg:col-span-5 space-y-6">
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm text-center flex flex-col items-center space-y-3">
             <div className="w-16 h-16 rounded-full bg-slate-100 border flex items-center justify-center font-black text-primary text-2xl uppercase shadow-sm">
-              {user.fullName.charAt(0)}
+              {(user.fullName || '?').charAt(0)}
             </div>
             <div>
               <h3 className="text-base font-black text-primary">{user.fullName}</h3>
               <p className="text-[10px] text-slate-400 font-mono font-bold tracking-wider">{user.employeeId}</p>
             </div>
             <div className="text-[11px] text-slate-600 bg-slate-50 py-1.5 px-3.5 rounded-full font-bold">
-              {user.department} Department
+              {user.department || '—'} Department
+            </div>
+            {user.email && (
+              <p className="text-[11px] text-slate-500 font-medium">{user.email}</p>
+            )}
+            <div className="text-[11px] text-slate-600 bg-slate-50 py-1.5 px-3.5 rounded-full font-bold">
+              Balance: {formatETB(user.balance)}
+              {user.monthlyAllocation ? ` · Monthly: ${formatETB(user.monthlyAllocation)}` : ''}
             </div>
           </div>
 
-          {/* Password update form */}
-          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-5">
+          {/* Password change — directed to Forgot Password / OTP flow */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
             <div>
               <h3 className="text-sm font-black text-primary tracking-tight">Security Credentials</h3>
-              <p className="text-[10px] text-subtle-text mt-0.5">Verify old passwords before setting a new login key</p>
+              <p className="text-[10px] text-subtle-text mt-0.5">Password changes use the secure login recovery flow</p>
             </div>
 
-            {passError && (
-              <p className="p-3 bg-red-50 rounded-xl border border-red-200 text-danger font-bold">{passError}</p>
-            )}
-
-            {passSuccess && (
-              <p className="p-3 bg-green-50 rounded-xl border border-green-200 text-success font-bold">{passSuccess}</p>
-            )}
-
-            <form onSubmit={handleUpdatePassword} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Current Password</label>
-                <input
-                  id="profile-old-pass"
-                  type="password"
-                  required
-                  placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
-                  value={oldPassword}
-                  onChange={(e) => setOldPassword(e.target.value)}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">New Password</label>
-                <input
-                  id="profile-new-pass"
-                  type="password"
-                  required
-                  placeholder="At least 6 characters..."
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Confirm New Password</label>
-                <input
-                  id="profile-confirm-pass"
-                  type="password"
-                  required
-                  placeholder="Match new password..."
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none"
-                />
-              </div>
-
-              <button
-                id="update-password-submit-btn"
-                type="submit"
-                className="w-full py-3 bg-primary text-white font-bold rounded-xl hover:bg-secondary transition-all min-h-[44px]"
-              >
-                Update Password
-              </button>
-            </form>
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 text-left">
+              <p className="text-[11px] text-slate-700 font-medium leading-relaxed">
+                To change your password, sign out and use <strong>Forgot Password</strong> on the login page.
+                You will receive an OTP to verify your identity and set a new password.
+              </p>
+              <p className="text-[10px] text-slate-400">
+                In-app password updates are not available from this portal.
+              </p>
+            </div>
           </div>
         </div>
 
@@ -1173,15 +1257,21 @@ function EmployeeProfilePage({
           </div>
 
           <div className="divide-y divide-slate-100">
-            {allocationHistory.map((alloc) => (
-              <div key={alloc.id} className="py-3.5 flex justify-between items-center text-xs">
-                <div className="space-y-0.5">
-                  <h4 className="font-bold text-primary">{alloc.cycleMonth} Allotment</h4>
-                  <span className="text-[10px] text-slate-400 font-medium">Credits issued on {new Date(alloc.date).toLocaleDateString()}</span>
+            {allocationHistory.length === 0 ? (
+              <p className="py-8 text-center text-subtle-text text-xs">No allocation history yet.</p>
+            ) : (
+              allocationHistory.map((alloc) => (
+                <div key={alloc.id} className="py-3.5 flex justify-between items-center text-xs">
+                  <div className="space-y-0.5">
+                    <h4 className="font-bold text-primary">{formatAllocationMonth(alloc.month)} Allotment</h4>
+                    <span className="text-[10px] text-slate-400 font-medium">
+                      Credits issued on {alloc.date ? new Date(alloc.date).toLocaleDateString() : '—'}
+                    </span>
+                  </div>
+                  <span className="font-black text-success">{formatETB(alloc.amount)}</span>
                 </div>
-                <span className="font-black text-success">{formatETB(alloc.amount)}</span>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 
@@ -1197,6 +1287,10 @@ function EmployeeOrdersPage({
   user,
   menuItems,
   myOrders,
+  cafes,
+  selectedCafeId,
+  onCafeChange,
+  menuLoading,
   onReload,
   apiPost,
   setToast,
@@ -1206,6 +1300,10 @@ function EmployeeOrdersPage({
   user: any;
   menuItems: any[];
   myOrders: any[];
+  cafes: any[];
+  selectedCafeId: string;
+  onCafeChange: (cafeId: string) => Promise<void>;
+  menuLoading: boolean;
   onReload: () => Promise<void>;
   apiPost: (path: string, body: any) => Promise<any>;
   setToast: (toast: any) => void;
@@ -1258,6 +1356,10 @@ function EmployeeOrdersPage({
         <EmployeePlaceOrder
           user={user}
           menuItems={menuItems}
+          cafes={cafes}
+          selectedCafeId={selectedCafeId}
+          onCafeChange={onCafeChange}
+          menuLoading={menuLoading}
           onReload={onReload}
           apiPost={apiPost}
           setToast={setToast}

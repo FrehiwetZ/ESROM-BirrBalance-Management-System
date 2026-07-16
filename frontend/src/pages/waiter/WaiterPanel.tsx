@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { useTranslation } from 'react-i18next';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { formatETB } from '../../utils/format';
+import { normalizeMenuItem, unwrapData } from '../../utils/apiMappers';
 import {
   QrCode,
   Search,
@@ -12,53 +13,44 @@ import {
   AlertTriangle,
   Lock,
   UtensilsCrossed,
-  ArrowLeft,
-  DollarSign,
-  UserCheck,
   RotateCcw
 } from 'lucide-react';
 
 export default function WaiterPanel() {
-  const { user, apiGet, apiPost } = useApp();
+  const { user, apiGet, apiPost, addToOfflineQueue, isOffline } = useApp();
   const { t } = useTranslation();
 
-  // Workflow states: 'scan' | 'order' | 'success'
   const [step, setStep] = useState<'scan' | 'order' | 'success'>('scan');
-
-  // Employee lookup states
-  const [manualId, setManualId] = useState('');
+  const [manualToken, setManualToken] = useState('');
   const [scannedEmployee, setScannedEmployee] = useState<any | null>(null);
+  const [qrSessionId, setQrSessionId] = useState<string | null>(null);
+  const [cafeId, setCafeId] = useState<number | null>(null);
   const [lookupError, setLookupError] = useState('');
-
-  // Cart / Menu states
   const [menuItems, setMenuItems] = useState<any[]>([]);
   const [cart, setCart] = useState<{ item: any; quantity: number }[]>([]);
-
-  // Transaction Authorization
-  const [waiterPassword, setWaiterPassword] = useState('');
+  const [employeePassword, setEmployeePassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [finalTxId, setFinalTxId] = useState('');
-
-  // HTML5 QR Scanner
+  const [loading, setLoading] = useState(false);
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
 
-  // Load menu items
   useEffect(() => {
     const loadMenu = async () => {
       try {
-        const res = await apiGet('/api/menu');
-        setMenuItems(res.menuItems.filter((i: any) => i.available));
+        const res = await apiGet('/api/waiter/menu');
+        const items = unwrapData(res);
+        const list = Array.isArray(items) ? items : items?.items ?? [];
+        setMenuItems(list.map(normalizeMenuItem).filter((i: any) => i.available));
+        if (list[0]?.cafe_id) setCafeId(Number(list[0].cafe_id));
       } catch (err) {
         console.error(err);
       }
     };
     loadMenu();
-  }, []);
+  }, [apiGet]);
 
-  // HTML5 QR code scanning initialization
   useEffect(() => {
     if (step === 'scan' && !scannerRef.current) {
-      // Setup qr scanner container
       setTimeout(() => {
         const qrContainer = document.getElementById('qr-scanner-viewport');
         if (qrContainer) {
@@ -75,9 +67,7 @@ export default function WaiterPanel() {
                 scannerRef.current = null;
                 await handleQrScan(decodedText.trim());
               },
-              (err) => {
-                // Ignore silent scans
-              }
+              () => {}
             );
 
             scannerRef.current = scanner;
@@ -98,47 +88,38 @@ export default function WaiterPanel() {
     };
   }, [step]);
 
-  // Handle scanned encrypted QR code
+  const applyScanResult = (data: any) => {
+    const emp = data.employee;
+    setScannedEmployee({
+      id: emp.id,
+      fullName: emp.fullname,
+      employeeId: emp.employee_external_id,
+      department: emp.department || '',
+      balance: Number(emp.balance ?? 0),
+    });
+    setQrSessionId(data.qr_session_id);
+    setCart([]);
+    setStep('order');
+  };
+
   const handleQrScan = async (qrString: string) => {
     if (!qrString.trim()) return;
     setLookupError('');
+    setLoading(true);
 
     try {
-      const res = await apiPost('/api/orders/verify-qr', { qrString });
-      if (res.employee) {
-        setScannedEmployee(res.employee);
-        setCart([]);
-        setStep('order');
-      } else {
-        setLookupError('Employee not found or invalid token.');
-      }
+      const res = await apiPost('/api/waiter/scan', { qr_token: qrString });
+      applyScanResult(unwrapData(res));
     } catch (e: any) {
       setLookupError(e.message || 'Error verifying encrypted QR token.');
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Query employee detail (manual ID fallback)
-  const handleLookupEmployee = async (empId: string) => {
-    if (!empId.trim()) return;
-    setLookupError('');
-
-    try {
-      const res = await apiPost('/api/waiter/lookup-employee', { employeeId: empId });
-      if (res.employee) {
-        setScannedEmployee(res.employee);
-        setCart([]);
-        setStep('order');
-      } else {
-        setLookupError('Employee ID not found in database.');
-      }
-    } catch (e: any) {
-      setLookupError(e.message || 'Error locating employee record.');
-    }
-  };
-
-  const handleManualSearch = (e: React.FormEvent) => {
+  const handleManualScan = (e: React.FormEvent) => {
     e.preventDefault();
-    handleLookupEmployee(manualId);
+    handleQrScan(manualToken);
   };
 
   const getBasketTotal = () => {
@@ -170,56 +151,67 @@ export default function WaiterPanel() {
     });
   };
 
-  // Perform secure authorized debit
   const handleConfirmDebit = async () => {
-    if (!waiterPassword) {
-      setAuthError('Please enter your authorization password.');
+    if (!employeePassword) {
+      setAuthError('Please enter the employee confirmation password.');
+      return;
+    }
+    if (!qrSessionId || !scannedEmployee) {
+      setAuthError('QR session expired. Please scan again.');
       return;
     }
     setAuthError('');
+    setLoading(true);
+
+    const payload = {
+      employee_id: Number(scannedEmployee.id),
+      cafe_id: cafeId ?? Number(menuItems[0]?.cafeId),
+      qr_session_id: qrSessionId,
+      password: employeePassword,
+      items: cart.map(c => ({
+        menu_item_id: Number(c.item.id),
+        quantity: c.quantity,
+      })),
+    };
 
     try {
-      const formattedItems = cart.map(c => ({
-        itemId: c.item.id,
-        name: c.item.name,
-        quantity: c.quantity,
-        price: c.item.price
-      }));
+      if (isOffline) {
+        addToOfflineQueue(payload);
+        setFinalTxId('OFFLINE-QUEUED');
+        setEmployeePassword('');
+        setStep('success');
+        return;
+      }
 
-      const res = await apiPost('/api/waiter/verify-and-debit', {
-        employeeId: scannedEmployee.employeeId,
-        items: formattedItems,
-        waiterPassword: waiterPassword
-      });
+      const res = await apiPost('/api/waiter/order', payload);
+      const data = unwrapData(res);
 
-      // Beep audio notifications
       try {
         const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const oscillator = audioCtx.createOscillator();
         oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // High pitch success beep
+        oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
         oscillator.connect(audioCtx.destination);
         oscillator.start();
         oscillator.stop(audioCtx.currentTime + 0.15);
-      } catch (e) {
-        console.log('Audio beep blocked or unsupported');
-      }
+      } catch (e) {}
 
-      setFinalTxId(res.order.id);
-      setWaiterPassword('');
+      setFinalTxId(String(data.order_uuid || data.order_id));
+      setEmployeePassword('');
       setStep('success');
     } catch (e: any) {
-      setAuthError(e.message || 'Authorization failed. Please check password.');
-      // Low beep for failure
+      setAuthError(e.message || 'Authorization failed. Please check employee password.');
       try {
         const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const oscillator = audioCtx.createOscillator();
         oscillator.type = 'sawtooth';
-        oscillator.frequency.setValueAtTime(150, audioCtx.currentTime); // Low buzz
+        oscillator.frequency.setValueAtTime(150, audioCtx.currentTime);
         oscillator.connect(audioCtx.destination);
         oscillator.start();
         oscillator.stop(audioCtx.currentTime + 0.3);
-      } catch (e) {}
+      } catch (err) {}
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -227,7 +219,6 @@ export default function WaiterPanel() {
 
   return (
     <div className="flex-1 max-w-5xl mx-auto w-full px-4 py-6 md:py-10 space-y-8 font-sans">
-      {/* Header banner */}
       <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-xl font-extrabold text-primary tracking-tight">Waiter Sales Portal</h1>
@@ -238,6 +229,7 @@ export default function WaiterPanel() {
             id="waiter-reset-btn"
             onClick={() => {
               setScannedEmployee(null);
+              setQrSessionId(null);
               setCart([]);
               setStep('scan');
             }}
@@ -251,29 +243,25 @@ export default function WaiterPanel() {
 
       {step === 'scan' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
-          
-          {/* Scan coupon panel */}
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex flex-col justify-between space-y-6">
             <div className="text-center md:text-left">
               <h3 className="text-sm font-black text-primary tracking-tight">Scan Employee QR Token</h3>
               <p className="text-[10px] text-subtle-text font-medium mt-0.5">Place coupon in front of front-facing or mobile camera</p>
             </div>
 
-            {/* Html5-qrcode viewport container */}
             <div className="bg-slate-50 rounded-3xl border border-slate-200 p-4 relative overflow-hidden flex flex-col items-center justify-center min-h-[300px]">
               <div id="qr-scanner-viewport" className="w-full max-w-sm rounded-2xl overflow-hidden shadow-inner text-xs font-mono font-bold text-slate-500" />
               <div className="mt-4 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                 <QrCode className="w-4 h-4 text-slate-300" />
-                <span>Camera scan state online</span>
+                <span>{loading ? 'Verifying…' : 'Camera scan state online'}</span>
               </div>
             </div>
           </div>
 
-          {/* Manual ID fallback input card */}
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex flex-col justify-between space-y-6">
             <div className="space-y-1">
-              <h3 className="text-sm font-black text-primary tracking-tight">Manual ID Lookup</h3>
-              <p className="text-[10px] text-subtle-text font-medium">Use if camera permissions are absent or blocked</p>
+              <h3 className="text-sm font-black text-primary tracking-tight">Paste QR Token</h3>
+              <p className="text-[10px] text-subtle-text font-medium">Use if camera permissions are absent — paste the scanned QR string</p>
             </div>
 
             {lookupError && (
@@ -283,19 +271,19 @@ export default function WaiterPanel() {
               </div>
             )}
 
-            <form onSubmit={handleManualSearch} className="space-y-4 text-xs">
+            <form onSubmit={handleManualScan} className="space-y-4 text-xs">
               <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Enter Employee ID / Name</label>
+                <label className="font-bold text-slate-700">QR Token</label>
                 <div className="relative flex items-center">
                   <Search className="w-4 h-4 text-slate-400 absolute left-4" />
                   <input
                     id="manual-id-input"
                     type="text"
                     required
-                    placeholder="e.g. EMP001"
-                    value={manualId}
-                    onChange={(e) => setManualId(e.target.value)}
-                    className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent text-xs font-bold uppercase tracking-wider"
+                    placeholder="Paste QR token from employee card"
+                    value={manualToken}
+                    onChange={(e) => setManualToken(e.target.value)}
+                    className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent text-xs font-bold tracking-wider"
                   />
                 </div>
               </div>
@@ -303,25 +291,23 @@ export default function WaiterPanel() {
               <button
                 id="manual-search-submit"
                 type="submit"
-                className="w-full py-4 bg-primary hover:bg-secondary text-white font-bold rounded-xl shadow-md transition-all uppercase text-[10px] tracking-wider min-h-[44px]"
+                disabled={loading}
+                className="w-full py-4 bg-primary hover:bg-secondary text-white font-bold rounded-xl shadow-md transition-all uppercase text-[10px] tracking-wider min-h-[44px] disabled:opacity-50"
               >
-                Search Account
+                Verify Token
               </button>
             </form>
 
             <div className="p-4 bg-blue-50/50 rounded-2xl text-xs text-slate-600 leading-relaxed border border-slate-100">
               <h4 className="font-bold text-primary mb-1">Authorization Instructions</h4>
-              <p>Verify that the employee has a valid corporate badge. Once identified, you will select meals and authorize debit with your unique waiter password.</p>
+              <p>Scan the employee QR to open a short-lived session. Select meals, then confirm with the employee password to debit their meal balance.</p>
             </div>
           </div>
-
         </div>
       )}
 
       {step === 'order' && scannedEmployee && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          
-          {/* Menu / items (8 columns) */}
           <div className="lg:col-span-8 space-y-6">
             <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -339,31 +325,33 @@ export default function WaiterPanel() {
               </div>
             </div>
 
-            {/* Dishes selections */}
             <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-5">
               <h3 className="text-xs font-black text-primary uppercase tracking-wider">Quick Select Meals</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs">
-                {menuItems.map((item) => (
-                  <button
-                    id={`waiter-add-${item.id}`}
-                    key={item.id}
-                    onClick={() => addToCart(item)}
-                    className="p-3 border border-slate-200 hover:border-primary rounded-2xl text-left hover:bg-slate-50/30 transition-all space-y-2 flex flex-col justify-between h-28"
-                  >
-                    <span className="font-extrabold text-primary line-clamp-2 leading-tight">{item.name}</span>
-                    <div className="flex justify-between items-end w-full">
-                      <span className="text-[10px] font-bold text-secondary">{formatETB(item.price)}</span>
-                      <div className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold">
-                        +
+              {menuItems.length === 0 ? (
+                <p className="text-xs text-subtle-text py-8 text-center">No available menu items for your cafe.</p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs">
+                  {menuItems.map((item) => (
+                    <button
+                      id={`waiter-add-${item.id}`}
+                      key={item.id}
+                      onClick={() => addToCart(item)}
+                      className="p-3 border border-slate-200 hover:border-primary rounded-2xl text-left hover:bg-slate-50/30 transition-all space-y-2 flex flex-col justify-between h-28"
+                    >
+                      <span className="font-extrabold text-primary line-clamp-2 leading-tight">{item.name}</span>
+                      <div className="flex justify-between items-end w-full">
+                        <span className="text-[10px] font-bold text-secondary">{formatETB(item.price)}</span>
+                        <div className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold">
+                          +
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Subtotal & debit validation (4 columns) */}
           <div className="lg:col-span-4 bg-white rounded-3xl p-5 border border-slate-100 shadow-sm space-y-5 text-xs">
             <div>
               <h3 className="text-sm font-black text-primary tracking-tight">Active Tray Details</h3>
@@ -377,7 +365,6 @@ export default function WaiterPanel() {
               </div>
             ) : (
               <div className="space-y-4">
-                {/* Cart list */}
                 <div className="divide-y divide-slate-100 max-h-52 overflow-y-auto pr-1">
                   {cart.map((c) => (
                     <div key={c.item.id} className="py-3 flex items-center justify-between text-xs">
@@ -406,7 +393,6 @@ export default function WaiterPanel() {
                   ))}
                 </div>
 
-                {/* Subtotals */}
                 <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl space-y-1">
                   <div className="flex justify-between text-slate-500">
                     <span>Remaining Balance:</span>
@@ -425,21 +411,20 @@ export default function WaiterPanel() {
                   </div>
                 )}
 
-                {/* Authorization form */}
                 {getBasketTotal() <= scannedEmployee.balance && (
                   <div className="space-y-3.5 pt-3 border-t">
                     <div className="space-y-1.5">
                       <label className="font-bold text-slate-700 flex items-center gap-1">
                         <Lock className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Confirm Waiter Password *</span>
+                        <span>Employee Password *</span>
                       </label>
                       <input
                         id="waiter-auth-password"
                         type="password"
                         required
-                        placeholder="Type password to authorize..."
-                        value={waiterPassword}
-                        onChange={(e) => setWaiterPassword(e.target.value)}
+                        placeholder="Employee confirms with password..."
+                        value={employeePassword}
+                        onChange={(e) => setEmployeePassword(e.target.value)}
                         className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent"
                       />
                     </div>
@@ -451,17 +436,16 @@ export default function WaiterPanel() {
                     <button
                       id="waiter-debit-submit-btn"
                       onClick={handleConfirmDebit}
-                      disabled={!waiterPassword}
+                      disabled={!employeePassword || loading}
                       className="w-full py-3.5 bg-primary hover:bg-secondary text-white font-bold uppercase text-[10px] tracking-wider rounded-xl transition-all shadow-md disabled:opacity-45"
                     >
-                      Authorize & Debit Meal
+                      {loading ? 'Processing…' : 'Authorize & Debit Meal'}
                     </button>
                   </div>
                 )}
               </div>
             )}
           </div>
-
         </div>
       )}
 
@@ -495,6 +479,7 @@ export default function WaiterPanel() {
             id="waiter-success-close-btn"
             onClick={() => {
               setScannedEmployee(null);
+              setQrSessionId(null);
               setCart([]);
               setStep('scan');
             }}

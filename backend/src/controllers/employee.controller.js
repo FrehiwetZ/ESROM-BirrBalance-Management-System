@@ -28,10 +28,69 @@ export const getProfile = asyncHandler(async (req, res) => {
       departments: {
         select: { name: true },
       },
+      monthly_allocations_monthly_allocations_user_idTousers: {
+        orderBy: { allocation_month: "desc" },
+        take: 12,
+        select: {
+          id: true,
+          amount: true,
+          allocation_month: true,
+          created_at: true,
+        },
+      },
     },
   });
 
   return successResponse(res, user, "Profile fetched successfully");
+});
+
+export const listCafes = asyncHandler(async (req, res) => {
+  const cafes = await prisma.cafes.findMany({
+    where: { is_active: true },
+    select: {
+      id: true,
+      name: true,
+      location: true,
+      is_active: true,
+    },
+    orderBy: { name: "asc" },
+  });
+
+  return successResponse(res, cafes, "Cafes fetched successfully");
+});
+
+export const listAvailableMenu = asyncHandler(async (req, res) => {
+  const cafeId = Number.parseInt(req.query.cafe_id, 10);
+  if (!Number.isInteger(cafeId) || cafeId <= 0) {
+    throw new AppError("cafe_id must be a positive integer", 400);
+  }
+
+  const cafe = await prisma.cafes.findFirst({
+    where: { id: cafeId, is_active: true },
+    select: { id: true },
+  });
+  if (!cafe) {
+    throw new AppError("Cafe not found or inactive", 404);
+  }
+
+  const items = await prisma.menu_items.findMany({
+    where: { cafe_id: cafeId, is_available: true },
+    orderBy: { name: "asc" },
+  });
+
+  return successResponse(
+    res,
+    items.map((item) => ({
+      id: item.id,
+      cafe_id: item.cafe_id,
+      name: item.name,
+      description: item.description,
+      price: Number(item.price),
+      image_url: item.image_url,
+      is_available: item.is_available,
+    })),
+    "Menu items fetched successfully",
+  );
 });
 
 export const getBalance = asyncHandler(async (req, res) => {

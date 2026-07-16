@@ -7,6 +7,32 @@ import { validateOfflineOrder } from "../validators/order.validators.js";
 import { successResponse } from "../utils/response.js";
 import { AppError } from "../utils/AppError.js";
 import { writeAuditLog } from "../services/audit.service.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+
+export const listWaiterMenu = asyncHandler(async (req, res) => {
+  if (!req.user.cafeId) {
+    throw new AppError("Waiter is not assigned to a cafe", 403);
+  }
+
+  const items = await prisma.menu_items.findMany({
+    where: { cafe_id: req.user.cafeId, is_available: true },
+    orderBy: { name: "asc" },
+  });
+
+  return successResponse(
+    res,
+    items.map((item) => ({
+      id: item.id,
+      cafe_id: item.cafe_id,
+      name: item.name,
+      description: item.description,
+      price: Number(item.price),
+      image_url: item.image_url,
+      is_available: item.is_available,
+    })),
+    "Menu items fetched successfully",
+  );
+});
 
 export const scanQR = async (req, res, next) => {
   try {

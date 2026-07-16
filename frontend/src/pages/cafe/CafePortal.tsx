@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../../context/AppContext';
 import { useTranslation } from 'react-i18next';
@@ -28,10 +28,53 @@ import {
   MostOrderedItemsChart,
   PeakOrderTimesChart
 } from '../../components/charts/DashboardCharts';
-import { exportToExcel, exportToCSV, exportToPDF } from '../../utils/exportHelpers';
+import { exportToExcel } from '../../utils/exportHelpers';
+import {
+  normalizeMenuItem,
+  normalizeOrder,
+  normalizeWaiterPerformance,
+  unwrapData,
+} from '../../utils/apiMappers';
+
+const currentMonthString = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const formatPeakHour = (hour: string) => {
+  const raw = String(hour ?? '').split(':')[0];
+  const h = Number(raw);
+  if (Number.isNaN(h)) return String(hour ?? '—');
+  const suffix = h >= 12 ? 'PM' : 'AM';
+  const display = h % 12 === 0 ? 12 : h % 12;
+  return `${String(display).padStart(2, '0')} ${suffix}`;
+};
+
+const downloadCafeReport = async (month: string, fmt: 'csv' | 'xlsx' | 'pdf') => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(
+    `/api/cafe/reports/operational?month=${encodeURIComponent(month)}&format=${fmt}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) {
+    throw new Error('Failed to download report');
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  const fileName = match?.[1] || `cafe-operational-report-${month}.${fmt}`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
 
 export default function CafePortal() {
-  const { user, apiGet, apiPost, apiPut, apiDelete, setGlobalLoading } = useApp();
+  const { user, apiGet, apiPost, apiPatch, apiDelete } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
@@ -53,33 +96,73 @@ export default function CafePortal() {
   const [menuItems, setMenuItems] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [waiters, setWaiters] = useState<any[]>([]);
-  const [feedbacks, setFeedbacks] = useState<any[]>([]);
+  const [analytics, setAnalytics] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const loadCafeData = async () => {
+  const loadCafeData = useCallback(async () => {
+    setLoading(true);
+    setError('');
     try {
-      const itemsData = await apiGet('/api/menu');
-      setMenuItems(itemsData.menuItems);
+      const month = currentMonthString();
+      const [menuRes, ordersRes, analyticsRes] = await Promise.all([
+        apiGet('/api/cafe/menu'),
+        apiGet('/api/cafe/orders?limit=100'),
+        apiGet(`/api/cafe/analytics?month=${month}`),
+      ]);
 
-      const ordsData = await apiGet('/api/orders');
-      setOrders(ordsData.orders);
+      const menuData = unwrapData(menuRes);
+      const menuList = Array.isArray(menuData) ? menuData : (menuData?.items ?? []);
+      setMenuItems(menuList.map(normalizeMenuItem));
 
-      const waitersData = await apiGet('/api/waiters');
-      setWaiters(waitersData.waiters);
+      const ordersData = unwrapData(ordersRes);
+      const orderList = Array.isArray(ordersData)
+        ? ordersData
+        : (ordersData?.items ?? ordersData?.orders ?? []);
+      setOrders(orderList.map(normalizeOrder));
 
-      const feeds = await apiGet('/api/feedback');
-      setFeedbacks(feeds.feedback);
-    } catch (e) {
+      const stats = unwrapData(analyticsRes) ?? {};
+      setAnalytics(stats);
+      const waiterList = (stats.waiter_performance ?? []).map(normalizeWaiterPerformance);
+      setWaiters(waiterList);
+    } catch (e: any) {
       console.error('Error loading cafe portal data', e);
+      setError(e?.message || 'Failed to load cafe data');
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [apiGet]);
 
   useEffect(() => {
     if (user && user.role === 'cafe') {
       loadCafeData();
     }
-  }, [user, location.pathname]);
+  }, [user, location.pathname, loadCafeData]);
 
   if (!user || user.role !== 'cafe') return null;
+
+  if (loading) {
+    return (
+      <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 md:py-10 font-sans">
+        <p className="text-sm font-bold text-subtle-text">Loading café data…</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 md:py-10 font-sans space-y-4">
+        <p className="text-sm font-bold text-danger bg-red-50 p-4 rounded-2xl border border-red-200">{error}</p>
+        <button
+          type="button"
+          onClick={() => loadCafeData()}
+          className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 md:py-10 space-y-8 font-sans">
@@ -87,7 +170,7 @@ export default function CafePortal() {
         <CafeDashboardOverview
           orders={orders}
           waiters={waiters}
-          menuItems={menuItems}
+          analytics={analytics}
         />
       )}
       {activeTab === 'menu' && (
@@ -95,7 +178,7 @@ export default function CafePortal() {
           menuItems={menuItems}
           onReload={loadCafeData}
           apiPost={apiPost}
-          apiPut={apiPut}
+          apiPatch={apiPatch}
           apiDelete={apiDelete}
         />
       )}
@@ -103,23 +186,20 @@ export default function CafePortal() {
         <CafeOrdersList
           orders={orders}
           onReload={loadCafeData}
-          apiPut={apiPut}
+          apiPatch={apiPatch}
         />
       )}
       {activeTab === 'waiters' && (
         <CafeWaitersPerformance
           waiters={waiters}
           orders={orders}
-          feedbacks={feedbacks}
         />
       )}
       {activeTab === 'analytics' && (
-        <CafeEmployeeUsageAnalytics />
+        <CafeEmployeeUsageAnalytics apiGet={apiGet} />
       )}
       {activeTab === 'reports' && (
-        <CafeOperationalReports
-          orders={orders}
-        />
+        <CafeOperationalReports apiGet={apiGet} />
       )}
     </div>
   );
@@ -131,30 +211,34 @@ export default function CafePortal() {
 function CafeDashboardOverview({
   orders,
   waiters,
-  menuItems
+  analytics,
 }: {
   orders: any[];
   waiters: any[];
-  menuItems: any[];
+  analytics: any | null;
 }) {
-  const { t } = useTranslation();
-
-  // Metrics
-  const totalOrdersToday = orders.filter(o => o.status !== 'expired').length;
-  const totalRevenue = orders.filter(o => o.status === 'confirmed').reduce((sum, o) => sum + o.amount, 0);
+  const totalOrdersToday = analytics?.total_orders ?? orders.filter(o => o.status !== 'expired' && o.status !== 'cancelled').length;
+  const totalRevenue = analytics?.total_sales ?? 0;
   const activeWaiters = waiters.length;
-  const mostOrdered = 'Doro Wot (185)';
+  const mostOrderedItem = analytics?.most_ordered_item;
+  const mostOrdered = mostOrderedItem
+    ? `${mostOrderedItem.name} (${mostOrderedItem.total_quantity})`
+    : '—';
+
+  const dailyOrders = (analytics?.daily_orders ?? []) as { date: string; count: number }[];
+  const chartData = dailyOrders.map((d) => ({
+    day: d.date
+      ? new Date(d.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+      : '—',
+    orders: Number(d.count ?? 0),
+  }));
+  const sparkCounts = dailyOrders.map((d) => Number(d.count ?? 0));
+  const orderSpark = sparkCounts.length > 0 ? sparkCounts.slice(-6) : [0];
+  const revenueSpark = sparkCounts.length > 0 ? sparkCounts.slice(-6) : [0];
 
   const handleExportVolume = () => {
-    const volumeData = [
-      { Day: 'Mon', Orders: 120 },
-      { Day: 'Tue', Orders: 145 },
-      { Day: 'Wed', Orders: 132 },
-      { Day: 'Thu', Orders: 185 },
-      { Day: 'Fri', Orders: 210 },
-      { Day: 'Sat', Orders: 75 },
-      { Day: 'Sun', Orders: 40 },
-    ];
+    if (chartData.length === 0) return;
+    const volumeData = chartData.map((d) => ({ Day: d.day, Orders: d.orders }));
     exportToExcel(volumeData, 'Cafe_Daily_Order_Volume', 'Orders stats');
   };
 
@@ -174,10 +258,9 @@ function CafeDashboardOverview({
             <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">Total Orders Today</p>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-black text-text-primary">{totalOrdersToday}</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-badge-bg text-text-sidebar-active dark:bg-brand-primary/20 dark:text-brand-secondary dark:shadow-[0_0_8px_rgba(59,130,246,0.2)]">+8%</span>
             </div>
           </div>
-          <MiniSparklineChart data={[15, 18, 20, 22, 28, 31]} type="bar" color="#3B82F6" />
+          <MiniSparklineChart data={orderSpark} type="bar" color="#3B82F6" />
         </div>
 
         {/* Revenue */}
@@ -186,10 +269,10 @@ function CafeDashboardOverview({
             <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">Total Revenue This Month</p>
             <div className="flex items-baseline gap-1">
               <span className="text-[10px] font-bold text-text-subtle">ETB</span>
-              <span className="text-2xl font-black text-text-primary">{totalRevenue.toLocaleString()}</span>
+              <span className="text-2xl font-black text-text-primary">{Number(totalRevenue).toLocaleString()}</span>
             </div>
           </div>
-          <MiniSparklineChart data={[30, 34, 40, 48, 52, 60]} color="#8B5CF6" />
+          <MiniSparklineChart data={revenueSpark} color="#8B5CF6" />
         </div>
 
         {/* Most Ordered Item */}
@@ -225,13 +308,18 @@ function CafeDashboardOverview({
             </div>
           </div>
 
-          <DailyOrderVolumeChart />
+          {chartData.length === 0 ? (
+            <p className="text-xs text-subtle-text py-8 text-center">No daily order data for this month.</p>
+          ) : (
+            <DailyOrderVolumeChart data={chartData} />
+          )}
 
           <div className="pt-2 border-t border-slate-100 flex justify-end">
             <button
               id="export-daily-vol-btn"
               onClick={handleExportVolume}
-              className="flex items-center gap-2 px-4 py-2 border border-primary text-primary hover:bg-slate-50 rounded-xl text-xs font-bold transition-all"
+              disabled={chartData.length === 0}
+              className="flex items-center gap-2 px-4 py-2 border border-primary text-primary hover:bg-slate-50 rounded-xl text-xs font-bold transition-all disabled:opacity-40"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Export Order Data</span>
@@ -243,27 +331,30 @@ function CafeDashboardOverview({
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 space-y-6">
           <div>
             <h3 className="text-sm font-black text-primary tracking-tight">Staff Efficiency Stats</h3>
-            <p className="text-[10px] text-subtle-text font-medium mt-0.5">Average wait and ratings per cashier waiter</p>
+            <p className="text-[10px] text-subtle-text font-medium mt-0.5">Orders and sales per waiter</p>
           </div>
 
           <div className="space-y-4">
-            {waiters.map((w) => (
-              <div key={w.id} className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-2xl transition-all">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-slate-100 text-primary font-bold flex items-center justify-center uppercase shadow-sm">
-                    {w.name.charAt(0)}
+            {waiters.length === 0 ? (
+              <p className="text-xs text-subtle-text py-4 text-center">No waiter performance data yet.</p>
+            ) : (
+              waiters.map((w) => (
+                <div key={w.id} className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-2xl transition-all">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-slate-100 text-primary font-bold flex items-center justify-center uppercase shadow-sm">
+                      {(w.name || '?').charAt(0)}
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-primary">{w.name}</h4>
+                      <p className="text-[10px] text-slate-400">ETB {Number(w.totalSales ?? 0).toLocaleString()}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-primary">{w.name}</h4>
-                    <p className="text-[10px] text-slate-400">Rating: {w.rating} ★</p>
+                  <div className="text-right">
+                    <span className="text-[10px] font-extrabold text-slate-600 block">{w.totalOrders} Orders</span>
                   </div>
                 </div>
-                <div className="text-right">
-                  <span className="text-[10px] font-extrabold text-slate-600 block">{w.totalOrders} Orders</span>
-                  <span className="text-[9px] text-slate-400">Avg {w.avgDeliveryTime}</span>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>
@@ -275,40 +366,48 @@ function CafeDashboardOverview({
           <p className="text-[10px] text-subtle-text font-medium mt-0.5">Live status and waiter assignments for incoming lunch tickets</p>
         </div>
 
-        <div className="table-container relative -mx-6">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-slate-100 text-[10px] font-bold text-subtle-text uppercase tracking-wider bg-slate-50/50">
-                <th className="py-3 px-6">Order ID</th>
-                <th className="py-3 px-3">Employee Name</th>
-                <th className="py-3 px-3">Items Ordered</th>
-                <th className="py-3 px-3 text-right">Amount</th>
-                <th className="py-3 px-3 text-center">Waiter Name</th>
-                <th className="py-3 px-6 text-center">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs">
-              {orders.slice(0, 5).map((order) => (
-                <tr key={order.id} className="hover:bg-slate-50/40 transition-colors">
-                  <td className="py-3 px-6 font-mono font-bold text-primary">{order.id}</td>
-                  <td className="py-3 px-3 font-bold text-primary">{order.employeeName}</td>
-                  <td className="py-3 px-3 text-slate-500 font-medium max-w-xs truncate">
-                    {order.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', ')}
-                  </td>
-                  <td className="py-3 px-3 text-right font-extrabold text-primary">ETB {order.amount}</td>
-                  <td className="py-3 px-3 text-center text-slate-600 font-semibold">{order.waiterName}</td>
-                  <td className="py-3 px-6 text-center">
-                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                      order.status === 'confirmed' ? 'bg-green-50 text-success' : order.status === 'ready' ? 'bg-blue-50 text-ready' : 'bg-amber-50 text-warning'
-                    }`}>
-                      {order.status}
-                    </span>
-                  </td>
+        {orders.length === 0 ? (
+          <p className="text-xs text-subtle-text py-6 text-center">No recent orders.</p>
+        ) : (
+          <div className="table-container relative -mx-6">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-100 text-[10px] font-bold text-subtle-text uppercase tracking-wider bg-slate-50/50">
+                  <th className="py-3 px-6">Order ID</th>
+                  <th className="py-3 px-3">Employee Name</th>
+                  <th className="py-3 px-3">Items Ordered</th>
+                  <th className="py-3 px-3 text-right">Amount</th>
+                  <th className="py-3 px-3 text-center">Waiter Name</th>
+                  <th className="py-3 px-6 text-center">Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs">
+                {orders.slice(0, 5).map((order) => (
+                  <tr key={order.id} className="hover:bg-slate-50/40 transition-colors">
+                    <td className="py-3 px-6 font-mono font-bold text-primary">{order.id}</td>
+                    <td className="py-3 px-3 font-bold text-primary">{order.employeeName}</td>
+                    <td className="py-3 px-3 text-slate-500 font-medium max-w-xs truncate">
+                      {(order.items ?? []).map((i: any) => `${i.name} (x${i.quantity})`).join(', ') || '—'}
+                    </td>
+                    <td className="py-3 px-3 text-right font-extrabold text-primary">ETB {order.amount}</td>
+                    <td className="py-3 px-3 text-center text-slate-600 font-semibold">{order.waiterName}</td>
+                    <td className="py-3 px-6 text-center">
+                      <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                        order.status === 'completed' || order.status === 'confirmed'
+                          ? 'bg-green-50 text-success'
+                          : order.status === 'ready'
+                            ? 'bg-blue-50 text-ready'
+                            : 'bg-amber-50 text-warning'
+                      }`}>
+                        {order.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -321,13 +420,13 @@ function CafeMenuManagement({
   menuItems,
   onReload,
   apiPost,
-  apiPut,
+  apiPatch,
   apiDelete
 }: {
   menuItems: any[];
   onReload: () => Promise<void>;
   apiPost: (path: string, body: any) => Promise<any>;
-  apiPut: (path: string, body: any) => Promise<any>;
+  apiPatch: (path: string, body?: any) => Promise<any>;
   apiDelete: (path: string) => Promise<any>;
 }) {
   const [showAddModal, setShowAddModal] = useState(false);
@@ -343,18 +442,17 @@ function CafeMenuManagement({
 
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !price || !category) {
-      setFormError('Item name, category, and price are required.');
+    if (!name.trim() || !price) {
+      setFormError('Item name and price are required.');
       return;
     }
 
     try {
-      await apiPost('/api/menu', {
-        name,
-        description,
-        price,
-        category,
-        photo
+      await apiPost('/api/cafe/menu', {
+        name: name.trim(),
+        description: description.trim() || undefined,
+        price: Number(price),
+        is_available: true,
       });
 
       setName('');
@@ -372,7 +470,9 @@ function CafeMenuManagement({
 
   const handleToggleAvailable = async (item: any) => {
     try {
-      await apiPut(`/api/menu/${item.id}`, { available: !item.available });
+      await apiPatch(`/api/cafe/menu/${item.id}/availability`, {
+        is_available: !item.available,
+      });
       onReload();
     } catch (e) {
       console.error(e);
@@ -382,7 +482,7 @@ function CafeMenuManagement({
   const handleDeleteItem = async () => {
     if (!deleteItem) return;
     try {
-      await apiDelete(`/api/menu/${deleteItem.id}`);
+      await apiDelete(`/api/cafe/menu/${deleteItem.id}`);
       setDeleteItem(null);
       onReload();
     } catch (e) {
@@ -409,65 +509,71 @@ function CafeMenuManagement({
       </div>
 
       {/* Grid layout */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-        {menuItems.map((item) => (
-          <div key={item.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between group">
-            {/* Meal Image */}
-            <div className="h-40 overflow-hidden relative bg-slate-100">
-              <img
-                src={item.photo || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=300&auto=format&fit=crop'}
-                alt={item.name}
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-              />
-              <span className="absolute top-3 left-3 bg-slate-900/80 backdrop-blur-sm text-white font-bold text-[9px] uppercase px-2 py-0.5 rounded-full">
-                {item.category}
-              </span>
-            </div>
-
-            {/* Content Body */}
-            <div className="p-5 space-y-3 flex-1 flex flex-col justify-between">
-              <div className="space-y-1">
-                <div className="flex justify-between items-start gap-2">
-                  <h3 className="text-sm font-black text-primary line-clamp-1">{item.name}</h3>
-                  <span className="text-xs font-extrabold text-secondary flex-shrink-0">ETB {item.price}</span>
-                </div>
-                <p className="text-[11px] text-subtle-text line-clamp-2 leading-relaxed">{item.description || 'No description provided.'}</p>
+      {menuItems.length === 0 ? (
+        <p className="text-xs text-subtle-text py-10 text-center bg-white rounded-3xl border border-slate-100">
+          No menu items yet. Add your first dish to get started.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+          {menuItems.map((item) => (
+            <div key={item.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between group">
+              {/* Meal Image */}
+              <div className="h-40 overflow-hidden relative bg-slate-100">
+                <img
+                  src={item.photo || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=300&auto=format&fit=crop'}
+                  alt={item.name}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
+                <span className="absolute top-3 left-3 bg-slate-900/80 backdrop-blur-sm text-white font-bold text-[9px] uppercase px-2 py-0.5 rounded-full">
+                  {item.category || 'Food'}
+                </span>
               </div>
 
-              <div className="pt-3 border-t border-slate-50 flex items-center justify-between flex-wrap gap-2">
-                {/* Available toggle */}
-                <div className="flex items-center gap-2">
+              {/* Content Body */}
+              <div className="p-5 space-y-3 flex-1 flex flex-col justify-between">
+                <div className="space-y-1">
+                  <div className="flex justify-between items-start gap-2">
+                    <h3 className="text-sm font-black text-primary line-clamp-1">{item.name}</h3>
+                    <span className="text-xs font-extrabold text-secondary flex-shrink-0">ETB {item.price}</span>
+                  </div>
+                  <p className="text-[11px] text-subtle-text line-clamp-2 leading-relaxed">{item.description || 'No description provided.'}</p>
+                </div>
+
+                <div className="pt-3 border-t border-slate-50 flex items-center justify-between flex-wrap gap-2">
+                  {/* Available toggle */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      id={`menu-toggle-avail-${item.id}`}
+                      onClick={() => handleToggleAvailable(item)}
+                      className={`w-10 h-6 rounded-full p-0.5 transition-colors focus:outline-none ${
+                        item.available ? 'bg-success' : 'bg-slate-200'
+                      }`}
+                    >
+                      <div className={`bg-white w-5 h-5 rounded-full shadow-md transform transition-transform ${
+                        item.available ? 'translate-x-4' : 'translate-x-0'
+                      }`} />
+                    </button>
+                    <span className="text-[10px] font-bold text-slate-500 uppercase">
+                      {item.available ? 'Available' : 'Unavailable'}
+                    </span>
+                  </div>
+
+                  {/* Delete option */}
                   <button
-                    id={`menu-toggle-avail-${item.id}`}
-                    onClick={() => handleToggleAvailable(item)}
-                    className={`w-10 h-6 rounded-full p-0.5 transition-colors focus:outline-none ${
-                      item.available ? 'bg-success' : 'bg-slate-200'
-                    }`}
+                    id={`menu-delete-trigger-${item.id}`}
+                    onClick={() => setDeleteItem(item)}
+                    className="p-2 border border-slate-200 hover:border-red-200 rounded-lg text-slate-400 hover:text-danger transition-all"
+                    title="Permanently Delete Item"
                   >
-                    <div className={`bg-white w-5 h-5 rounded-full shadow-md transform transition-transform ${
-                      item.available ? 'translate-x-4' : 'translate-x-0'
-                    }`} />
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
-                  <span className="text-[10px] font-bold text-slate-500 uppercase">
-                    {item.available ? 'Available' : 'Unavailable'}
-                  </span>
                 </div>
-
-                {/* Delete option */}
-                <button
-                  id={`menu-delete-trigger-${item.id}`}
-                  onClick={() => setDeleteItem(item)}
-                  className="p-2 border border-slate-200 hover:border-red-200 rounded-lg text-slate-400 hover:text-danger transition-all"
-                  title="Permanently Delete Item"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Add Item Modal */}
       {showAddModal && (
@@ -528,7 +634,7 @@ function CafeMenuManagement({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="font-bold text-slate-700">Category *</label>
+                  <label className="font-bold text-slate-700">Category</label>
                   <select
                     id="add-menu-category"
                     value={category}
@@ -612,20 +718,51 @@ function CafeMenuManagement({
 function CafeOrdersList({
   orders,
   onReload,
-  apiPut
+  apiPatch
 }: {
   orders: any[];
   onReload: () => Promise<void>;
-  apiPut: (path: string, body: any) => Promise<any>;
+  apiPatch: (path: string, body?: any) => Promise<any>;
 }) {
+  const queueOrders = orders.filter(o => o.status === 'pending' || o.status === 'preparing');
+  const readyOrders = orders.filter(o => o.status === 'ready');
+  const deliveredOrders = orders.filter(o => o.status === 'completed' || o.status === 'confirmed');
+
   const handleUpdateStatus = async (orderId: string, nextStatus: string) => {
     try {
-      await apiPut(`/api/orders/${orderId}/status`, { status: nextStatus });
+      await apiPatch(`/api/orders/${orderId}/status`, { status: nextStatus });
       onReload();
     } catch (e) {
       console.error(e);
     }
   };
+
+  const renderOrderCard = (o: any, action?: React.ReactNode) => (
+    <div key={o.id} className={`bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3 ${action ? '' : 'opacity-80 space-y-2'}`}>
+      <div className="flex justify-between items-start">
+        <div>
+          <h4 className="font-extrabold text-xs text-primary">{o.employeeName}</h4>
+          <span className="text-[9px] text-slate-400 font-mono">{o.id}</span>
+        </div>
+        <span className={`text-[10px] font-black ${action ? 'text-secondary' : 'text-success'}`}>ETB {o.amount}</span>
+      </div>
+      {action ? (
+        <>
+          <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-xl space-y-0.5 font-semibold">
+            {(o.items ?? []).map((i: any) => (
+              <p key={i.itemId || `${i.name}-${i.quantity}`}>&bull; {i.name} (x{i.quantity})</p>
+            ))}
+          </div>
+          {action}
+        </>
+      ) : (
+        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider flex items-center gap-1">
+          <Check className="w-3.5 h-3.5 text-success" />
+          <span>Completed</span>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -635,110 +772,91 @@ function CafeOrdersList({
         <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Monitor live order statuses and handle prep pipelines</p>
       </div>
 
-      {/* Pipeline grids */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Pending Stage */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-            <span className="text-xs font-black text-primary uppercase tracking-wider">Queue / Pending</span>
-            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold">
-              {orders.filter(o => o.status === 'pending').length}
-            </span>
+      {orders.length === 0 ? (
+        <p className="text-xs text-subtle-text py-10 text-center bg-white rounded-3xl border border-slate-100">
+          No kitchen orders right now.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Pending Stage */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <span className="text-xs font-black text-primary uppercase tracking-wider">Queue / Pending</span>
+              <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold">
+                {queueOrders.length}
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {queueOrders.length === 0 ? (
+                <p className="text-[11px] text-subtle-text text-center py-4">Queue is empty</p>
+              ) : (
+                queueOrders.map(o =>
+                  renderOrderCard(
+                    o,
+                    <button
+                      id={`btn-prep-${o.id}`}
+                      onClick={() => handleUpdateStatus(o.id, 'ready')}
+                      className="w-full text-center py-2 bg-primary hover:bg-secondary text-white font-bold rounded-lg text-[10px] uppercase shadow-sm transition-all"
+                    >
+                      Mark as Ready / Out for delivery
+                    </button>
+                  )
+                )
+              )}
+            </div>
           </div>
 
-          <div className="space-y-3">
-            {orders.filter(o => o.status === 'pending').map(o => (
-              <div key={o.id} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className="font-extrabold text-xs text-primary">{o.employeeName}</h4>
-                    <span className="text-[9px] text-slate-400 font-mono">{o.id}</span>
-                  </div>
-                  <span className="text-[10px] font-black text-secondary">ETB {o.amount}</span>
-                </div>
-                <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-xl space-y-0.5 font-semibold">
-                  {o.items.map((i: any) => (
-                    <p key={i.itemId}>&bull; {i.name} (x{i.quantity})</p>
-                  ))}
-                </div>
-                <button
-                  id={`btn-prep-${o.id}`}
-                  onClick={() => handleUpdateStatus(o.id, 'ready')}
-                  className="w-full text-center py-2 bg-primary hover:bg-secondary text-white font-bold rounded-lg text-[10px] uppercase shadow-sm transition-all"
-                >
-                  Mark as Ready / Out for delivery
-                </button>
-              </div>
-            ))}
+          {/* Ready Stage */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <span className="text-xs font-black text-primary uppercase tracking-wider">Ready for Delivery</span>
+              <span className="px-2 py-0.5 rounded-full bg-blue-50 text-ready text-[10px] font-bold">
+                {readyOrders.length}
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {readyOrders.length === 0 ? (
+                <p className="text-[11px] text-subtle-text text-center py-4">No ready orders</p>
+              ) : (
+                readyOrders.map(o =>
+                  renderOrderCard(
+                    o,
+                    <div className="flex gap-1.5">
+                      <button
+                        id={`btn-confirm-${o.id}`}
+                        onClick={() => handleUpdateStatus(o.id, 'completed')}
+                        className="flex-1 text-center py-2 bg-success text-white font-bold rounded-lg text-[10px] uppercase shadow-sm transition-all"
+                      >
+                        Delivered
+                      </button>
+                    </div>
+                  )
+                )
+              )}
+            </div>
+          </div>
+
+          {/* Confirmed / Delivered Stage */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <span className="text-xs font-black text-primary uppercase tracking-wider">Delivered / Confirmed</span>
+              <span className="px-2 py-0.5 rounded-full bg-green-50 text-success text-[10px] font-bold">
+                {deliveredOrders.length}
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {deliveredOrders.length === 0 ? (
+                <p className="text-[11px] text-subtle-text text-center py-4">No delivered orders</p>
+              ) : (
+                deliveredOrders.slice(0, 4).map(o => renderOrderCard(o))
+              )}
+            </div>
           </div>
         </div>
-
-        {/* Ready Stage */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-            <span className="text-xs font-black text-primary uppercase tracking-wider">Ready for Delivery</span>
-            <span className="px-2 py-0.5 rounded-full bg-blue-50 text-ready text-[10px] font-bold">
-              {orders.filter(o => o.status === 'ready').length}
-            </span>
-          </div>
-
-          <div className="space-y-3">
-            {orders.filter(o => o.status === 'ready').map(o => (
-              <div key={o.id} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className="font-extrabold text-xs text-primary">{o.employeeName}</h4>
-                    <span className="text-[9px] text-slate-400 font-mono">{o.id}</span>
-                  </div>
-                  <span className="text-[10px] font-black text-secondary">ETB {o.amount}</span>
-                </div>
-                <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-xl space-y-0.5 font-semibold">
-                  {o.items.map((i: any) => (
-                    <p key={i.itemId}>&bull; {i.name} (x{i.quantity})</p>
-                  ))}
-                </div>
-                <div className="flex gap-1.5">
-                  <button
-                    id={`btn-confirm-${o.id}`}
-                    onClick={() => handleUpdateStatus(o.id, 'confirmed')}
-                    className="flex-1 text-center py-2 bg-success text-white font-bold rounded-lg text-[10px] uppercase shadow-sm transition-all"
-                  >
-                    Delivered
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Confirmed / Delivered Stage */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-            <span className="text-xs font-black text-primary uppercase tracking-wider">Delivered / Confirmed</span>
-            <span className="px-2 py-0.5 rounded-full bg-green-50 text-success text-[10px] font-bold">
-              {orders.filter(o => o.status === 'confirmed').length}
-            </span>
-          </div>
-
-          <div className="space-y-3">
-            {orders.filter(o => o.status === 'confirmed').slice(0, 4).map(o => (
-              <div key={o.id} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-2 opacity-80">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className="font-extrabold text-xs text-primary">{o.employeeName}</h4>
-                    <span className="text-[9px] text-slate-400 font-mono">{o.id}</span>
-                  </div>
-                  <span className="text-[10px] font-black text-success">ETB {o.amount}</span>
-                </div>
-                <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider flex items-center gap-1">
-                  <Check className="w-3.5 h-3.5 text-success" />
-                  <span>Completed</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -749,11 +867,9 @@ function CafeOrdersList({
 function CafeWaitersPerformance({
   waiters,
   orders,
-  feedbacks
 }: {
   waiters: any[];
   orders: any[];
-  feedbacks: any[];
 }) {
   const [expandedWaiterId, setExpandedWaiterId] = useState<string | null>(null);
 
@@ -762,86 +878,85 @@ function CafeWaitersPerformance({
       {/* Header */}
       <div>
         <h1 className="text-2xl font-extrabold text-primary tracking-tight">Waiter Efficiency</h1>
-        <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Track average speeds, flags, and service quality</p>
+        <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Track order volume and sales by waiter</p>
       </div>
 
       {/* Table */}
       <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-        <div className="table-container relative">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-slate-100 text-[10px] font-bold text-subtle-text uppercase tracking-wider bg-slate-50/50">
-                <th className="py-4 px-6 w-16"></th>
-                <th className="py-4 px-4">Waiter Name</th>
-                <th className="py-4 px-4 text-center">Total Orders Handled</th>
-                <th className="py-4 px-4 text-center">Average Delivery Time</th>
-                <th className="py-4 px-4 text-center">Flagged Issues Count</th>
-                <th className="py-4 px-6 text-center">Performance Rating</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs">
-              {waiters.map((w) => {
-                const isExpanded = expandedWaiterId === w.id;
-                // Gather waiter orders
-                const waiterOrders = orders.filter(o => o.waiterName === w.name);
+        {waiters.length === 0 ? (
+          <p className="text-xs text-subtle-text py-10 text-center">No waiter performance data for this period.</p>
+        ) : (
+          <div className="table-container relative">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-100 text-[10px] font-bold text-subtle-text uppercase tracking-wider bg-slate-50/50">
+                  <th className="py-4 px-6 w-16"></th>
+                  <th className="py-4 px-4">Waiter Name</th>
+                  <th className="py-4 px-4 text-center">Total Orders Handled</th>
+                  <th className="py-4 px-4 text-center">Total Sales</th>
+                  <th className="py-4 px-6 text-center">Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs">
+                {waiters.map((w) => {
+                  const isExpanded = expandedWaiterId === w.id;
+                  const waiterOrders = orders.filter(o => o.waiterName === w.name);
 
-                return (
-                  <React.Fragment key={w.id}>
-                    <tr
-                      onClick={() => setExpandedWaiterId(isExpanded ? null : w.id)}
-                      className="hover:bg-slate-50/40 cursor-pointer select-none"
-                    >
-                      <td className="py-4 px-6 text-center">
-                        {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-                      </td>
-                      <td className="py-4 px-4 font-bold text-primary flex items-center gap-3">
-                        <div className="w-7 h-7 rounded-full bg-slate-100 text-primary font-bold flex items-center justify-center uppercase shadow-sm">
-                          {w.name.charAt(0)}
-                        </div>
-                        <span>{w.name}</span>
-                      </td>
-                      <td className="py-4 px-4 text-center font-bold text-slate-600">{w.totalOrders}</td>
-                      <td className="py-4 px-4 text-center font-medium text-slate-600">{w.avgDeliveryTime}</td>
-                      <td className="py-4 px-4 text-center">
-                        <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          w.flaggedIssues > 0 ? 'bg-red-50 text-danger' : 'bg-green-50 text-success'
-                        }`}>
-                          {w.flaggedIssues} issues
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 text-center text-amber-500 font-bold">{w.rating} ★</td>
-                    </tr>
-
-                    {/* Expands details */}
-                    {isExpanded && (
-                      <tr>
-                        <td colSpan={6} className="bg-slate-50/30 px-8 py-4">
-                          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-inner space-y-4">
-                            <h4 className="text-[10px] font-bold text-subtle-text uppercase tracking-wider border-b pb-2">Completed Logs by {w.name}</h4>
-                            {waiterOrders.length === 0 ? (
-                              <p className="text-xs text-subtle-text">No orders logged in this active session yet.</p>
-                            ) : (
-                              <div className="space-y-2 max-h-48 overflow-y-auto no-scrollbar text-xs">
-                                {waiterOrders.map(o => (
-                                  <div key={o.id} className="flex justify-between items-center p-2 hover:bg-slate-50 rounded-lg">
-                                    <span className="font-mono font-bold text-slate-500">{o.id}</span>
-                                    <span className="font-bold text-primary">{o.employeeName}</span>
-                                    <span className="font-bold text-secondary">ETB {o.amount}</span>
-                                    <span className="text-slate-400 font-medium">{new Date(o.date).toLocaleTimeString()}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                  return (
+                    <React.Fragment key={w.id}>
+                      <tr
+                        onClick={() => setExpandedWaiterId(isExpanded ? null : w.id)}
+                        className="hover:bg-slate-50/40 cursor-pointer select-none"
+                      >
+                        <td className="py-4 px-6 text-center">
+                          {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                        </td>
+                        <td className="py-4 px-4 font-bold text-primary flex items-center gap-3">
+                          <div className="w-7 h-7 rounded-full bg-slate-100 text-primary font-bold flex items-center justify-center uppercase shadow-sm">
+                            {(w.name || '?').charAt(0)}
                           </div>
+                          <span>{w.name}</span>
+                        </td>
+                        <td className="py-4 px-4 text-center font-bold text-slate-600">{w.totalOrders}</td>
+                        <td className="py-4 px-4 text-center font-medium text-slate-600">
+                          ETB {Number(w.totalSales ?? 0).toLocaleString()}
+                        </td>
+                        <td className="py-4 px-6 text-center text-slate-400 font-bold text-[10px] uppercase">
+                          {isExpanded ? 'Hide' : 'View'}
                         </td>
                       </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+
+                      {/* Expands details */}
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={5} className="bg-slate-50/30 px-8 py-4">
+                            <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-inner space-y-4">
+                              <h4 className="text-[10px] font-bold text-subtle-text uppercase tracking-wider border-b pb-2">Completed Logs by {w.name}</h4>
+                              {waiterOrders.length === 0 ? (
+                                <p className="text-xs text-subtle-text">No orders logged in this active session yet.</p>
+                              ) : (
+                                <div className="space-y-2 max-h-48 overflow-y-auto no-scrollbar text-xs">
+                                  {waiterOrders.map(o => (
+                                    <div key={o.id} className="flex justify-between items-center p-2 hover:bg-slate-50 rounded-lg">
+                                      <span className="font-mono font-bold text-slate-500">{o.id}</span>
+                                      <span className="font-bold text-primary">{o.employeeName}</span>
+                                      <span className="font-bold text-secondary">ETB {o.amount}</span>
+                                      <span className="text-slate-400 font-medium">{new Date(o.date).toLocaleTimeString()}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -850,42 +965,67 @@ function CafeWaitersPerformance({
 // -----------------------------------------------------------
 // SUB-PAGE 5: EMPLOYEE USAGE ANALYTICS
 // -----------------------------------------------------------
-function CafeEmployeeUsageAnalytics() {
-  const [dateRange, setDateRange] = useState('2026-06');
+function CafeEmployeeUsageAnalytics({
+  apiGet,
+}: {
+  apiGet: (path: string) => Promise<any>;
+}) {
+  const [dateRange, setDateRange] = useState(currentMonthString());
+  const [analytics, setAnalytics] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const res = await apiGet(`/api/cafe/analytics?month=${encodeURIComponent(dateRange)}`);
+        if (!cancelled) {
+          setAnalytics(unwrapData(res) ?? {});
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setError(e?.message || 'Failed to load analytics');
+          setAnalytics(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [apiGet, dateRange]);
+
+  const visitorsData = (analytics?.employee_usage ?? []).map((e: any) => ({
+    name: e.employee_name || e.name || 'Employee',
+    visits: Number(e.total_orders ?? e.visits ?? 0),
+  }));
+
+  const itemsData = (analytics?.popular_menu_items ?? []).map((i: any) => ({
+    name: i.name || 'Item',
+    count: Number(i.total_quantity ?? i.count ?? 0),
+  }));
+
+  const hoursData = (analytics?.peak_ordering_hours ?? []).map((h: any) => ({
+    hour: formatPeakHour(h.hour),
+    Orders: Number(h.count ?? h.Orders ?? 0),
+  }));
 
   const handleExportVisitors = () => {
-    const data = [
-      { name: 'Samuel Alene', visits: 24 },
-      { name: 'Hirut Kebede', visits: 19 },
-      { name: 'Mekdes Abebe', visits: 18 },
-      { name: 'Dawit Yohannes', visits: 15 },
-      { name: 'Yonas Girmay', visits: 12 },
-    ];
-    exportToExcel(data, 'Cafe_Top_Visitors', 'Visits count');
+    if (visitorsData.length === 0) return;
+    exportToExcel(visitorsData, 'Cafe_Top_Visitors', 'Visits count');
   };
 
   const handleExportItems = () => {
-    const data = [
-      { name: 'Doro Wot', count: 185 },
-      { name: 'Beyaynetu', count: 144 },
-      { name: 'Tibs', count: 122 },
-      { name: 'Fresh Juice', count: 98 },
-      { name: 'Coffee', count: 90 },
-    ];
-    exportToExcel(data, 'Cafe_Top_Items', 'Units count');
+    if (itemsData.length === 0) return;
+    exportToExcel(itemsData, 'Cafe_Top_Items', 'Units count');
   };
 
   const handleExportHours = () => {
-    const data = [
-      { hour: '07 AM', Orders: 10 },
-      { hour: '08 AM', Orders: 35 },
-      { hour: '09 AM', Orders: 15 },
-      { hour: '11 AM', Orders: 45 },
-      { hour: '12 PM', Orders: 165 },
-      { hour: '01 PM', Orders: 195 },
-      { hour: '02 PM', Orders: 80 },
-    ];
-    exportToExcel(data, 'Cafe_Peak_Hours', 'Hours count');
+    if (hoursData.length === 0) return;
+    exportToExcel(hoursData, 'Cafe_Peak_Hours', 'Hours count');
   };
 
   return (
@@ -907,46 +1047,70 @@ function CafeEmployeeUsageAnalytics() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Visitor Stats */}
-        <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
-          <h3 className="text-xs font-black text-primary uppercase tracking-wider">Most Frequent Employee Visitors</h3>
-          <FrequentVisitorsChart />
-          <button
-            id="export-visitors-btn"
-            onClick={handleExportVisitors}
-            className="w-full text-center py-2.5 border border-primary text-primary hover:bg-slate-50 text-[10px] font-bold uppercase rounded-xl transition-all"
-          >
-            Export Visitor Data
-          </button>
-        </div>
+      {loading && (
+        <p className="text-xs text-subtle-text">Loading analytics…</p>
+      )}
+      {error && (
+        <p className="text-xs font-bold text-danger bg-red-50 p-3 rounded-xl border border-red-200">{error}</p>
+      )}
 
-        {/* Food items stats */}
-        <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
-          <h3 className="text-xs font-black text-primary uppercase tracking-wider">Most Ordered Menu Items</h3>
-          <MostOrderedItemsChart />
-          <button
-            id="export-items-btn"
-            onClick={handleExportItems}
-            className="w-full text-center py-2.5 border border-primary text-primary hover:bg-slate-50 text-[10px] font-bold uppercase rounded-xl transition-all"
-          >
-            Export Item Data
-          </button>
-        </div>
+      {!loading && !error && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Visitor Stats */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
+            <h3 className="text-xs font-black text-primary uppercase tracking-wider">Most Frequent Employee Visitors</h3>
+            {visitorsData.length === 0 ? (
+              <p className="text-xs text-subtle-text py-6 text-center">No visitor data for this month.</p>
+            ) : (
+              <FrequentVisitorsChart data={visitorsData} />
+            )}
+            <button
+              id="export-visitors-btn"
+              onClick={handleExportVisitors}
+              disabled={visitorsData.length === 0}
+              className="w-full text-center py-2.5 border border-primary text-primary hover:bg-slate-50 text-[10px] font-bold uppercase rounded-xl transition-all disabled:opacity-40"
+            >
+              Export Visitor Data
+            </button>
+          </div>
 
-        {/* Peak Hours line */}
-        <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4 md:col-span-2">
-          <h3 className="text-xs font-black text-primary uppercase tracking-wider">Peak Dining Times by Hour</h3>
-          <PeakOrderTimesChart />
-          <button
-            id="export-hours-btn"
-            onClick={handleExportHours}
-            className="w-full text-center py-2.5 border border-primary text-primary hover:bg-slate-50 text-[10px] font-bold uppercase rounded-xl transition-all"
-          >
-            Export Hours Data
-          </button>
+          {/* Food items stats */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
+            <h3 className="text-xs font-black text-primary uppercase tracking-wider">Most Ordered Menu Items</h3>
+            {itemsData.length === 0 ? (
+              <p className="text-xs text-subtle-text py-6 text-center">No item data for this month.</p>
+            ) : (
+              <MostOrderedItemsChart data={itemsData} />
+            )}
+            <button
+              id="export-items-btn"
+              onClick={handleExportItems}
+              disabled={itemsData.length === 0}
+              className="w-full text-center py-2.5 border border-primary text-primary hover:bg-slate-50 text-[10px] font-bold uppercase rounded-xl transition-all disabled:opacity-40"
+            >
+              Export Item Data
+            </button>
+          </div>
+
+          {/* Peak Hours line */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4 md:col-span-2">
+            <h3 className="text-xs font-black text-primary uppercase tracking-wider">Peak Dining Times by Hour</h3>
+            {hoursData.length === 0 ? (
+              <p className="text-xs text-subtle-text py-6 text-center">No peak-hour data for this month.</p>
+            ) : (
+              <PeakOrderTimesChart data={hoursData} />
+            )}
+            <button
+              id="export-hours-btn"
+              onClick={handleExportHours}
+              disabled={hoursData.length === 0}
+              className="w-full text-center py-2.5 border border-primary text-primary hover:bg-slate-50 text-[10px] font-bold uppercase rounded-xl transition-all disabled:opacity-40"
+            >
+              Export Hours Data
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -954,53 +1118,54 @@ function CafeEmployeeUsageAnalytics() {
 // -----------------------------------------------------------
 // SUB-PAGE 6: OPERATIONAL REPORTS
 // -----------------------------------------------------------
-function CafeOperationalReports({ orders }: { orders: any[] }) {
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+function CafeOperationalReports({
+  apiGet,
+}: {
+  apiGet: (path: string) => Promise<any>;
+}) {
+  const [month, setMonth] = useState(currentMonthString());
+  const [metrics, setMetrics] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [exportError, setExportError] = useState('');
 
-  const reportOrders = orders.filter(o => o.status === 'confirmed');
-  const totalRevenue = reportOrders.reduce((sum, o) => sum + o.amount, 0);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const res = await apiGet(
+          `/api/cafe/reports/operational?month=${encodeURIComponent(month)}&format=json`
+        );
+        const data = unwrapData(res);
+        if (!cancelled) {
+          setMetrics(data?.metrics ?? []);
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setError(e?.message || 'Failed to load operational report');
+          setMetrics([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [apiGet, month]);
 
-  const handleExportXLSX = () => {
-    const data = reportOrders.map(o => ({
-      'Order ID': o.id,
-      'Employee ID': o.employeeId,
-      'Employee Name': o.employeeName,
-      Department: o.department,
-      Items: o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', '),
-      'Amount (ETB)': o.amount,
-      'Waiter Name': o.waiterName,
-      Date: new Date(o.date).toLocaleDateString(),
-    }));
-    exportToExcel(data, 'Cafe_Operational_Report', 'Sales');
-  };
+  const summary = metrics.find((m) => m.metric === 'summary');
+  const totalOrders = Number(summary?.total_orders ?? 0);
+  const totalRevenue = Number(summary?.total_sales ?? 0);
 
-  const handleExportCSV = () => {
-    const data = reportOrders.map(o => ({
-      'Order ID': o.id,
-      'Employee ID': o.employeeId,
-      'Employee Name': o.employeeName,
-      Department: o.department,
-      Items: o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', '),
-      'Amount (ETB)': o.amount,
-      'Waiter Name': o.waiterName,
-      Date: new Date(o.date).toLocaleDateString(),
-    }));
-    exportToCSV(data, 'Cafe_Operational_Report');
-  };
-
-  const handleExportPDF = () => {
-    const headers = ['Order ID', 'Employee Name', 'Items', 'Amount', 'Waiter', 'Date'];
-    const body = reportOrders.map(o => [
-      o.id,
-      o.employeeName,
-      o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', '),
-      `ETB ${o.amount}`,
-      o.waiterName,
-      new Date(o.date).toLocaleDateString(),
-    ]);
-
-    exportToPDF(headers, body, 'Café Operations Sales Report', 'Cafe_Operational_Sales_Report');
+  const handleDownload = async (fmt: 'csv' | 'xlsx' | 'pdf') => {
+    setExportError('');
+    try {
+      await downloadCafeReport(month, fmt);
+    } catch (e: any) {
+      setExportError(e?.message || `Failed to export ${fmt.toUpperCase()}`);
+    }
   };
 
   return (
@@ -1011,35 +1176,33 @@ function CafeOperationalReports({ orders }: { orders: any[] }) {
         <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Audit ledger logs and cafeteria sales summaries</p>
       </div>
 
-      {/* Date Pickers */}
+      {/* Month picker */}
       <div className="flex flex-col md:flex-row gap-4 items-end bg-white p-5 rounded-3xl border border-slate-100 shadow-sm text-xs">
         <div className="space-y-1.5 w-full md:w-auto">
-          <label className="font-bold text-slate-700">Start Date</label>
+          <label className="font-bold text-slate-700">Report Month</label>
           <input
-            id="ops-start-date"
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent font-semibold w-full"
-          />
-        </div>
-        <div className="space-y-1.5 w-full md:w-auto">
-          <label className="font-bold text-slate-700">End Date</label>
-          <input
-            id="ops-end-date"
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
+            id="ops-month-picker"
+            type="month"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
             className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent font-semibold w-full"
           />
         </div>
       </div>
 
+      {loading && <p className="text-xs text-subtle-text">Loading report…</p>}
+      {error && (
+        <p className="text-xs font-bold text-danger bg-red-50 p-3 rounded-xl border border-red-200">{error}</p>
+      )}
+      {exportError && (
+        <p className="text-xs font-bold text-danger bg-red-50 p-3 rounded-xl border border-red-200">{exportError}</p>
+      )}
+
       {/* Summary boxes */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
           <p className="text-[10px] font-bold text-subtle-text uppercase tracking-wider">Total Sales count</p>
-          <p className="text-2xl font-black text-primary mt-1">{reportOrders.length} orders</p>
+          <p className="text-2xl font-black text-primary mt-1">{totalOrders} orders</p>
         </div>
         <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
           <p className="text-[10px] font-bold text-subtle-text uppercase tracking-wider">Accumulated Sales Value</p>
@@ -1051,7 +1214,7 @@ function CafeOperationalReports({ orders }: { orders: any[] }) {
       <div className="flex flex-wrap gap-2.5">
         <button
           id="ops-export-xlsx-btn"
-          onClick={handleExportXLSX}
+          onClick={() => handleDownload('xlsx')}
           className="flex items-center gap-2 px-4 py-2.5 border border-primary text-primary hover:bg-slate-50 rounded-xl text-xs font-bold transition-all min-h-[44px]"
         >
           <Download className="w-4 h-4" />
@@ -1059,7 +1222,7 @@ function CafeOperationalReports({ orders }: { orders: any[] }) {
         </button>
         <button
           id="ops-export-pdf-btn"
-          onClick={handleExportPDF}
+          onClick={() => handleDownload('pdf')}
           className="flex items-center gap-2 px-4 py-2.5 border border-primary text-primary hover:bg-slate-50 rounded-xl text-xs font-bold transition-all min-h-[44px]"
         >
           <Download className="w-4 h-4" />
@@ -1067,7 +1230,7 @@ function CafeOperationalReports({ orders }: { orders: any[] }) {
         </button>
         <button
           id="ops-export-csv-btn"
-          onClick={handleExportCSV}
+          onClick={() => handleDownload('csv')}
           className="flex items-center gap-2 px-4 py-2.5 border border-primary text-primary hover:bg-slate-50 rounded-xl text-xs font-bold transition-all min-h-[44px]"
         >
           <Download className="w-4 h-4" />
@@ -1075,34 +1238,44 @@ function CafeOperationalReports({ orders }: { orders: any[] }) {
         </button>
       </div>
 
-      {/* Sales table */}
+      {/* Metrics table */}
       <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-        <div className="table-container relative">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-slate-100 text-[10px] font-bold text-subtle-text uppercase tracking-wider bg-slate-50/50">
-                <th className="py-4 px-6">Order ID</th>
-                <th className="py-4 px-4">Employee Name</th>
-                <th className="py-4 px-4">Items</th>
-                <th className="py-4 px-4 text-right">Amount</th>
-                <th className="py-4 px-4 text-center">Waiter Name</th>
-                <th className="py-4 px-6">Date</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs">
-              {reportOrders.map(o => (
-                <tr key={o.id} className="hover:bg-slate-50/40 transition-colors">
-                  <td className="py-3 px-6 font-mono font-bold text-primary">{o.id}</td>
-                  <td className="py-3 px-4 font-bold text-primary">{o.employeeName}</td>
-                  <td className="py-3 px-4 text-slate-500 font-semibold truncate max-w-xs">{o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', ')}</td>
-                  <td className="py-3 px-4 text-right font-black text-primary">ETB {o.amount}</td>
-                  <td className="py-3 px-4 text-center text-slate-600 font-bold">{o.waiterName}</td>
-                  <td className="py-3 px-6 text-slate-400 font-semibold">{new Date(o.date).toLocaleDateString()}</td>
+        {(!loading && metrics.length === 0) ? (
+          <p className="text-xs text-subtle-text py-10 text-center">No operational metrics for this month.</p>
+        ) : (
+          <div className="table-container relative">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-100 text-[10px] font-bold text-subtle-text uppercase tracking-wider bg-slate-50/50">
+                  <th className="py-4 px-6">Metric</th>
+                  <th className="py-4 px-4">Name</th>
+                  <th className="py-4 px-4 text-right">Orders</th>
+                  <th className="py-4 px-4 text-right">Sales / Qty</th>
+                  <th className="py-4 px-6">Notes</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs">
+                {metrics.map((m, idx) => (
+                  <tr key={`${m.metric}-${m.name}-${idx}`} className="hover:bg-slate-50/40 transition-colors">
+                    <td className="py-3 px-6 font-mono font-bold text-primary text-[10px] uppercase">{m.metric}</td>
+                    <td className="py-3 px-4 font-bold text-primary">{m.name}</td>
+                    <td className="py-3 px-4 text-right font-semibold text-slate-600">
+                      {m.total_orders != null ? m.total_orders : '—'}
+                    </td>
+                    <td className="py-3 px-4 text-right font-black text-primary">
+                      {m.total_sales != null
+                        ? `ETB ${Number(m.total_sales).toLocaleString()}`
+                        : m.quantity != null
+                          ? m.quantity
+                          : '—'}
+                    </td>
+                    <td className="py-3 px-6 text-slate-400 font-semibold">{m.extra || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
