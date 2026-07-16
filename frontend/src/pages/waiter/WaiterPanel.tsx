@@ -231,7 +231,7 @@ export default function WaiterPanel() {
       <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-xl font-extrabold text-primary tracking-tight">Waiter Sales Portal</h1>
-          <p className="text-[10px] text-subtle-text font-medium uppercase tracking-wider mt-1">Logged in: <strong>{user.fullName}</strong> &bull; Cashier Waiter Mode</p>
+          <p className="text-[10px] text-subtle-text font-medium uppercase tracking-wider mt-1">Logged in: <strong>{user.fullname}</strong> &bull; Cashier Waiter Mode</p>
         </div>
         {step !== 'scan' && (
           <button

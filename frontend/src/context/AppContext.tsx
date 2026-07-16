@@ -42,6 +42,29 @@ interface AppContextType {
   apiDelete: (path: string) => Promise<any>;
 }
 
+// Normalizes field names between the real backend's snake_case API
+// and the camelCase shape the rest of the frontend was built against.
+function normalizeApiData<T = any>(data: any): T {
+  if (Array.isArray(data)) {
+    return data.map(normalizeApiData) as any;
+  }
+  if (data && typeof data === 'object') {
+    const result: any = {};
+    for (const key of Object.keys(data)) {
+      const value = normalizeApiData(data[key]);
+      if (key === 'fullname') {
+        result['fullName'] = value;
+      } else if (key === 'employee_external_id') {
+        result['employeeId'] = value;
+      } else {
+        result[key] = value;
+      }
+    }
+    return result;
+  }
+  return data;
+}
+
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -108,7 +131,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const err = await response.json().catch(() => ({ message: 'API error' }));
       throw new Error(err.message || 'API error');
     }
-    return response.json();
+    const json = await response.json();
+return normalizeApiData(json);;
   }, [token, isOffline]);
 
   const apiPut = useCallback(async (path: string, body: any) => {
@@ -135,7 +159,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const err = await response.json().catch(() => ({ message: 'API error' }));
       throw new Error(err.message || 'API error');
     }
-    return response.json();
+    const json = await response.json();
+    return normalizeApiData(json);
   }, [token, isOffline]);
 
   const apiDelete = useCallback(async (path: string) => {
@@ -161,7 +186,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const err = await response.json().catch(() => ({ message: 'API error' }));
       throw new Error(err.message || 'API error');
     }
-    return response.json();
+    const json = await response.json();
+return normalizeApiData(json);;
   }, [token, isOffline]);
 
   // Auth fetch

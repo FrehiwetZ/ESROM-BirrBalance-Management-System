@@ -115,6 +115,15 @@ const getMenuItemForCafe = async (menuItemId, cafeId) => {
   return item;
 };
 
+export const getPublicMenuItems = async (cafeId) => {
+  const items = await prisma.menu_items.findMany({
+    where: { cafe_id: cafeId, is_available: true },
+    orderBy: [{ name: "asc" }],
+  });
+
+  return items.map(formatMenuItem);
+};
+
 const deleteImageFile = (imageUrl) => {
   if (!imageUrl) return;
 

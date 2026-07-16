@@ -60,10 +60,10 @@ export default function EmployeePortal() {
 
   const loadEmployeeData = async () => {
     try {
-      const itemsData = await apiGet('/api/menu');
+      const itemsData = await apiGet(`/api/employee/cafes/${activeCafe.id}/menu`);
       setMenuItems(itemsData.menuItems.filter((i: any) => i.available));
 
-      const ordersData = await apiGet('/api/orders/my-orders');
+      const ordersData = await apiGet('/api/employee/orders');
       setMyOrders(ordersData.orders);
 
       const profileData = await apiGet('/api/employees/me/profile');
@@ -164,7 +164,7 @@ function EmployeeDashboard({
   const { t } = useTranslation();
   const employee = user ? {
     ...user,
-    firstName: user.fullName ? user.fullName.split(' ')[0] : ''
+    firstName: user.fullname ? user.fullname.split(' ')[0] : ''
   } : null;
   const navigate = useNavigate();
 
@@ -203,7 +203,7 @@ function EmployeeDashboard({
     pdf.setTextColor(15, 23, 42);
     pdf.setFontSize(12);
     pdf.setFont('helvetica', 'bold');
-    pdf.text(user.fullName, 52.5, 95, { align: 'center' });
+    pdf.text(user.fullname, 52.5, 95, { align: 'center' });
     pdf.setFontSize(10);
     pdf.setFont('helvetica', 'normal');
     pdf.text(user.employeeId, 52.5, 102, { align: 'center' });
@@ -240,7 +240,7 @@ function EmployeeDashboard({
     printWindow.document.write(`
       <html>
         <head>
-          <title>ESROM QR Code - ${user.fullName}</title>
+          <title>ESROM QR Code - ${user.fullname}</title>
           <style>
             body {
               display: flex;
@@ -289,7 +289,7 @@ function EmployeeDashboard({
         <body>
           <div class="header">ESROM BirrBalance</div>
           <img src="${imgData}" />
-          <div class="name">${user.fullName}</div>
+          <div class="name">${user.fullname}</div>
           <div class="details">${user.employeeId} · ${user.department}</div>
           <div class="note">Present this card at the cafeteria counter.<br/>Do not share your QR code with others.</div>
         </body>
@@ -408,7 +408,7 @@ function EmployeeDashboard({
 
           <div className="text-center">
             <p className="text-sm font-black text-slate-800 dark:text-white">
-              {user.employeeId} &middot; {user.fullName}
+              {user.employeeId} &middot; {user.fullname}
             </p>
             <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
               {user.department}
@@ -1088,10 +1088,10 @@ function EmployeeProfilePage({
         <div className="lg:col-span-5 space-y-6">
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm text-center flex flex-col items-center space-y-3">
             <div className="w-16 h-16 rounded-full bg-slate-100 border flex items-center justify-center font-black text-primary text-2xl uppercase shadow-sm">
-              {user.fullName.charAt(0)}
+              {user.fullname.charAt(0)}
             </div>
             <div>
-              <h3 className="text-base font-black text-primary">{user.fullName}</h3>
+              <h3 className="text-base font-black text-primary">{user.fullname}</h3>
               <p className="text-[10px] text-slate-400 font-mono font-bold tracking-wider">{user.employeeId}</p>
             </div>
             <div className="text-[11px] text-slate-600 bg-slate-50 py-1.5 px-3.5 rounded-full font-bold">
@@ -1839,7 +1839,7 @@ function EmployeeTransactionsPage({
         </head>
         <body>
           <h1>ESROM BirrBalance - Transaction History</h1>
-          <p>Generated on ${new Date().toLocaleString()} | Employee: ${user.fullName} (${user.employeeId}) | Department: ${user.department || 'N/A'}</p>
+          <p>Generated on ${new Date().toLocaleString()} | Employee: ${user.fullname} (${user.employeeId}) | Department: ${user.department || 'N/A'}</p>
           <table>
             <thead>
               <tr>

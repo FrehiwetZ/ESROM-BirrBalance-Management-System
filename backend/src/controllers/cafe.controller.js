@@ -25,6 +25,15 @@ export const listMenuItems = asyncHandler(async (req, res) => {
   return successResponse(res, items, "Menu items fetched successfully");
 });
 
+export const listPublicMenuItems = asyncHandler(async (req, res) => {
+  const cafeId = Number(req.params.cafeId);
+  if (!Number.isInteger(cafeId) || cafeId <= 0) {
+    throw new AppError("cafe id must be a positive integer", 400);
+  }
+  const items = await getPublicMenuItems(cafeId);
+  return successResponse(res, items, "Menu items fetched successfully");
+});
+
 export const addMenuItem = asyncHandler(async (req, res) => {
   const payload = validateMenuItemCreate(req.body);
   const item = await createMenuItem(req.user, payload, req.file, req.ip);
