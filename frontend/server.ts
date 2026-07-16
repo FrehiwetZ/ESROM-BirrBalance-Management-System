@@ -8,9 +8,15 @@ async function startServer() {
   const PORT = 3000;
 
   app.use('/api', createProxyMiddleware({
-    target: 'http://localhost:5000',
-    changeOrigin: true,
-  }));
+  target: 'http://localhost:5000',
+  changeOrigin: true,
+  pathRewrite: {
+    '^': '/api',
+  },
+  headers: {
+    'Connection': 'upgrade',
+  },
+}));
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

@@ -48,36 +48,33 @@ export default function Login() {
     }
   }, [navigate]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!employeeId.trim() || !password.trim()) {
-      setErrorMsg('Employee ID and password are required.');
-      return;
-    }
+ const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  if (!employeeId.trim() || !password.trim()) {
+    setErrorMsg('Employee ID and password are required.');
+    return;
+  }
 
-    setErrorMsg('');
-    setLoading(true);
+  setErrorMsg('');
+  setLoading(true);
 
-    try {
-      const response = await login(employeeId.toUpperCase(), password);
-      if (response && response.token) {
-        localStorage.setItem("token", response.token);
-        localStorage.setItem("role", response.role);
-
-        const role = response.role;
-        if (role === "company_manager") navigate("/manager/dashboard");
-        else if (role === "cafe_manager") navigate("/cafe/dashboard");
-        else if (role === "employee") navigate("/employee/dashboard");
-        else if (role === "waiter") navigate("/waiter/panel");
-        else navigate("/login");
-      }
-    } catch (err: any) {
-      setErrorMsg("Incorrect Employee ID or password. Please try again.");
-      setPassword(''); // clear password as specified
-    } finally {
-      setLoading(false);
-    }
-  };
+  try {
+    await login(employeeId.toUpperCase(), password);
+    // AppContext already set token, role, and user in localStorage
+    // Just grab the role and navigate
+    const role = localStorage.getItem('role');
+    if (role === "company_manager") navigate("/manager/dashboard");
+    else if (role === "cafe_manager") navigate("/cafe/dashboard");
+    else if (role === "employee") navigate("/employee/dashboard");
+    else if (role === "waiter") navigate("/waiter/panel");
+    else navigate("/login");
+  } catch (err: any) {
+    setErrorMsg("Incorrect Employee ID or password. Please try again.");
+    setPassword('');
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div className="min-h-screen grid grid-cols-1 lg:grid-cols-12 bg-page-bg font-sans">

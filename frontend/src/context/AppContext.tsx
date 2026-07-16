@@ -204,7 +204,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const fetchNotifications = useCallback(async () => {
     if (!token || isOffline) return;
     try {
-      const data = await apiGet('/api/notifications');
+      const data = await apiGet('/api/employee/notifications');
       setNotifications(data.notifications || []);
       setUnreadCount((data.notifications || []).filter((n: any) => !n.read).length);
     } catch (e) {

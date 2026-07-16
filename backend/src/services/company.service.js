@@ -147,7 +147,7 @@ export const createEmployee = async (actor, payload, ipAddress) => {
 
     const created = await tx.users.findUnique({ where: { id: employee.id }, select: employeeSelect });
     return formatEmployee(created);
-  });
+  },{ timeout: 30000 });
 };
 
 export const listEmployees = async (actor, filters, pagination, ipAddress) => {
