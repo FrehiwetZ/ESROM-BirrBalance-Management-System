@@ -166,21 +166,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Auth fetch
   const fetchMe = useCallback(async () => {
-    if (!token || isOffline) return;
-    try {
-      const data = await apiGet('/api/auth/me');
-      const userData = { ...data.user };
-      if (userData.role === 'company_manager') userData.role = 'manager';
-      if (userData.role === 'cafe_manager') userData.role = 'cafe';
-      setUser(userData);
-    } catch (e) {
-      console.error('Error fetching current user:', e);
-      setUser(null);
-      setToken(null);
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-    }
-  }, [token, apiGet, isOffline]);
+  if (!token || isOffline) return;
+  const cached = localStorage.getItem('user');
+  if (cached) {
+    setUser(JSON.parse(cached));
+    return;
+  }
+  setUser(null);
+  setToken(null);
+  localStorage.removeItem('token');
+  localStorage.removeItem('role');
+}, [token, isOffline]);
 
   useEffect(() => {
     if (token) {
@@ -235,26 +231,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('esrom_lang', lang);
   };
 
-  const login = async (employeeId: string, password: string): Promise<any> => {
-    setGlobalLoading(true);
-    try {
-      const data = await apiPost('/api/auth/login', { employeeId, password });
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('role', data.role);
-      setToken(data.token);
-      
-      const userData = { ...data.user };
-      if (userData.role === 'company_manager') userData.role = 'manager';
-      if (userData.role === 'cafe_manager') userData.role = 'cafe';
-      setUser(userData);
-      
-      setGlobalLoading(false);
-      return data;
-    } catch (e) {
-      setGlobalLoading(false);
-      throw e;
-    }
-  };
+const login = async (employeeId: string, password: string): Promise<any> => {
+  setGlobalLoading(true);
+  try {
+    const res = await apiPost('/api/auth/login', { employee_external_id: employeeId, password });
+    const { token, refresh_token, user: apiUser } = res.data;
+
+    let mappedRole = apiUser.roles[0];
+    if (mappedRole === 'company_manager') mappedRole = 'manager';
+    else if (mappedRole === 'cafe_manager') mappedRole = 'cafe';
+
+    const userData = { ...apiUser, role: mappedRole };
+
+    localStorage.setItem('token', token);
+    localStorage.setItem('role', mappedRole);
+    localStorage.setItem('user', JSON.stringify(userData));
+    if (refresh_token) localStorage.setItem('refresh_token', refresh_token);
+
+    setToken(token);
+    setUser(userData);
+
+    setGlobalLoading(false);
+    return res.data;
+  } catch (e) {
+    setGlobalLoading(false);
+    throw e;
+  }
+};
 
   const logout = () => {
     localStorage.removeItem('token');

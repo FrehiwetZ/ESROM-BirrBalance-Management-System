@@ -6,7 +6,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "tsx watch server.js",
+    "dev": "dotenvx run -- tsx watch server.js",
     "test": "node --test tests/*.test.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy"
