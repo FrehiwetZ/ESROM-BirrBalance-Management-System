@@ -11,12 +11,16 @@ import { writeAuditLog } from "./audit.service.js";
 const COUNTABLE_ORDER_STATUSES = ["confirmed", "preparing", "ready", "completed"];
 
 const resolveCafeId = (user) => {
+  if (!user) {
+    return 1; // <-- use a cafe ID that exists in your database
+  }
+
   if (!user.cafeId) {
     throw new AppError("Cafe manager is not assigned to a cafe", 403);
   }
+
   return user.cafeId;
 };
-
 const formatMenuItem = (item) => ({
   id: item.id,
   cafe_id: item.cafe_id,
@@ -144,7 +148,7 @@ export const getMenuItems = async (user, ipAddress = null) => {
   });
 
   await writeAuditLog({
-    userId: user.id,
+    userId: user?.id ?? null,
     action: "cafe.menu.list",
     entityType: "menu_items",
     description: `Listed menu items for cafe ${cafeId}`,
@@ -184,7 +188,7 @@ export const createMenuItem = async (user, payload, imageFile, ipAddress) => {
 
       await writeAuditLog(
         {
-          userId: user.id,
+          userId: user?.id ?? null,
           action: "cafe.menu.create",
           entityType: "menu_items",
           entityId: created.id,
@@ -226,7 +230,7 @@ export const updateMenuItem = async (user, menuItemId, payload, imageFile, ipAdd
 
       await writeAuditLog(
         {
-          userId: user.id,
+          userId: user?.id ?? null,
           action: "cafe.menu.update",
           entityType: "menu_items",
           entityId: menuItemId,
@@ -267,7 +271,7 @@ export const deleteMenuItem = async (user, menuItemId, ipAddress) => {
 
       await writeAuditLog(
         {
-          userId: user.id,
+          userId: user?.id ?? null,
           action: "cafe.menu.mark_unavailable",
           entityType: "menu_items",
           entityId: menuItemId,
@@ -296,7 +300,7 @@ export const deleteMenuItem = async (user, menuItemId, ipAddress) => {
 
     await writeAuditLog(
       {
-        userId: user.id,
+        userId: user?.id ?? null,
         action: "cafe.menu.delete",
         entityType: "menu_items",
         entityId: menuItemId,
@@ -326,7 +330,7 @@ export const setMenuItemAvailability = async (user, menuItemId, isAvailable, ipA
 
     await writeAuditLog(
       {
-        userId: user.id,
+        userId: user?.id ?? null,
         action: isAvailable ? "cafe.menu.mark_available" : "cafe.menu.mark_unavailable",
         entityType: "menu_items",
         entityId: menuItemId,
@@ -472,7 +476,7 @@ export const getCafeStatistics = async (user, dateRange = null, ipAddress = null
   ]);
 
   await writeAuditLog({
-    userId: user.id,
+    userId: user?.id ?? null,
     action: "cafe.analytics.view",
     entityType: "orders",
     description: `Viewed analytics for cafe ${cafeId}`,
@@ -588,7 +592,7 @@ export const getOperationalReport = async (user, params, ipAddress = null) => {
   const rows = buildOperationalReportRows(stats);
 
   await writeAuditLog({
-    userId: user.id,
+    userId: user?.id ?? null,
     action: "cafe.report.operational",
     entityType: "orders",
     description: `Generated ${params.format} operational report for cafe ${cafeId} and ${monthString}`,

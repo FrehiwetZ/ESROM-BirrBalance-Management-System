@@ -46,7 +46,7 @@ export default function WaiterPanel() {
   useEffect(() => {
     const loadMenu = async () => {
       try {
-        const res = await apiGet('/api/menu');
+        const res = await apiGet('/api/cafe/menu');
         setMenuItems(res.menuItems.filter((i: any) => i.available));
       } catch (err) {
         console.error(err);

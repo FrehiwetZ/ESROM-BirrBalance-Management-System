@@ -14,6 +14,7 @@ import {
   ChevronUp,
   X,
   Trash2,
+  Pencil,
   Check,
   AlertTriangle,
   Download,
@@ -31,7 +32,7 @@ import {
 import { exportToExcel, exportToCSV, exportToPDF } from '../../utils/exportHelpers';
 
 export default function CafePortal() {
-  const { user, apiGet, apiPost, apiPut, apiDelete, setGlobalLoading } = useApp();
+  const { user, apiGet, apiPost, apiPostForm, apiPut, apiDelete, setGlobalLoading } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
@@ -57,8 +58,8 @@ export default function CafePortal() {
 
   const loadCafeData = async () => {
     try {
-      const itemsData = await apiGet('/api/menu');
-      setMenuItems(itemsData.menuItems);
+      const itemsData = await apiGet('/api/cafe/menu');
+      setMenuItems(itemsData.data);
 
       const ordsData = await apiGet('/api/orders');
       setOrders(ordsData.orders);
@@ -95,6 +96,7 @@ export default function CafePortal() {
           menuItems={menuItems}
           onReload={loadCafeData}
           apiPost={apiPost}
+          apiPostForm={apiPostForm}
           apiPut={apiPut}
           apiDelete={apiDelete}
         />
@@ -321,12 +323,14 @@ function CafeMenuManagement({
   menuItems,
   onReload,
   apiPost,
+  apiPostForm,
   apiPut,
   apiDelete
 }: {
   menuItems: any[];
   onReload: () => Promise<void>;
   apiPost: (path: string, body: any) => Promise<any>;
+  apiPostForm: (path: string, formData: FormData) => Promise<any>;
   apiPut: (path: string, body: any) => Promise<any>;
   apiDelete: (path: string) => Promise<any>;
 }) {
@@ -335,8 +339,10 @@ function CafeMenuManagement({
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [category, setCategory] = useState<'Food' | 'Beverage' | 'Snack'>('Food');
-  const [photo, setPhoto] = useState('');
+  const [image, setImage] = useState<File | null>(null);
+  const [photo, setPhoto] = useState("");
   const [formError, setFormError] = useState('');
+  const [editingItem, setEditingItem] = useState<any | null>(null);
 
   // Delete handlers
   const [deleteItem, setDeleteItem] = useState<any | null>(null);
@@ -349,40 +355,75 @@ function CafeMenuManagement({
     }
 
     try {
-      await apiPost('/api/menu', {
-        name,
-        description,
-        price,
-        category,
-        photo
-      });
+  const formData = new FormData();
 
-      setName('');
-      setDescription('');
-      setPrice('');
-      setCategory('Food');
-      setPhoto('');
-      setShowAddModal(false);
-      setFormError('');
-      onReload();
-    } catch (e: any) {
-      setFormError(e.message || 'Error creating menu item');
-    }
+  formData.append("name", name);
+  formData.append("description", description);
+  formData.append("price", price);
+  formData.append("is_available", "true");
+
+  if (image) {
+    formData.append("image", image);
+  }
+
+  await apiPostForm("/api/cafe/menu", formData);
+
+  setName('');
+  setDescription('');
+  setPrice('');
+  setCategory('Food');
+  setImage(null);
+  setShowAddModal(false);
+  setFormError('');
+  onReload();
+} catch (e: any) {
+  setFormError(e.message || 'Error creating menu item');
+}
   };
 
+  const handleEditItem = async (e: React.FormEvent) => {
+  e.preventDefault();
+
+  if (!editingItem) return;
+
+  try {
+    await apiPut(`/api/cafe/menu/${editingItem.id}`, {
+      name,
+      description,
+      price: Number(price),
+      category,
+    });
+
+    setEditingItem(null);
+    setName('');
+    setDescription('');
+    setPrice('');
+    setCategory("Food");
+    setPhoto("");
+    setShowAddModal(false);
+    setFormError("");
+
+    onReload();
+  } catch (e: any) {
+    setFormError(e.message || 'Error updating menu item');
+  }
+};
   const handleToggleAvailable = async (item: any) => {
-    try {
-      await apiPut(`/api/menu/${item.id}`, { available: !item.available });
-      onReload();
-    } catch (e) {
-      console.error(e);
-    }
-  };
+  try {
+    await apiPut(`/api/cafe/menu/${item.id}/availability`, {
+      is_available: !item.is_available,
+    });
+
+    onReload();
+  } catch (e) {
+    console.error(e);
+  }
+};
 
   const handleDeleteItem = async () => {
     if (!deleteItem) return;
     try {
-      await apiDelete(`/api/menu/${deleteItem.id}`);
+      await apiDelete(`/api/cafe/menu/${deleteItem.id}`);
       setDeleteItem(null);
       onReload();
     } catch (e) {
@@ -404,7 +445,7 @@ function CafeMenuManagement({
           className="flex items-center gap-2 px-5 py-3 bg-primary hover:bg-secondary text-white rounded-xl text-xs font-bold shadow-md transition-all min-h-[44px]"
         >
           <Plus className="w-4 h-4" />
-          <span>Add Menu Item</span>
+          <span>{editingItem ? 'Edit Menu Item' : 'Add Menu Item'}</span>
         </button>
       </div>
 
@@ -442,17 +483,33 @@ function CafeMenuManagement({
                     id={`menu-toggle-avail-${item.id}`}
                     onClick={() => handleToggleAvailable(item)}
                     className={`w-10 h-6 rounded-full p-0.5 transition-colors focus:outline-none ${
-                      item.available ? 'bg-success' : 'bg-slate-200'
+                      item.is_available ? 'bg-success' : 'bg-slate-200'
                     }`}
                   >
                     <div className={`bg-white w-5 h-5 rounded-full shadow-md transform transition-transform ${
-                      item.available ? 'translate-x-4' : 'translate-x-0'
+                      item.is_available ? 'translate-x-4' : 'translate-x-0'
                     }`} />
                   </button>
                   <span className="text-[10px] font-bold text-slate-500 uppercase">
-                    {item.available ? 'Available' : 'Unavailable'}
+                    {item.is_available ? 'Available' : 'Unavailable'}
                   </span>
                 </div>
+
+                <button
+                 onClick={() => {
+                  setEditingItem(item);
+                  setName(item.name);
+                  setDescription(item.description || '');
+                  setPrice(item.price.toString());
+                  setCategory(item.category || "Food");
+                  setPhoto(item.image_url || "");
+                  setShowAddModal(true);
+                }}
+                  className="p-2 border border-slate-200 rounded-lg text-slate-400 hover:text-blue-600 transition-all"
+                 title="Edit Item"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
 
                 {/* Delete option */}
                 <button
@@ -470,7 +527,7 @@ function CafeMenuManagement({
       </div>
 
       {/* Add Item Modal */}
-      {showAddModal && (
+      {(showAddModal || editingItem) && (
         <div id="add-menu-modal" className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-6 md:p-8 w-full max-w-md shadow-2xl relative space-y-6 modal-card">
             <button
@@ -489,7 +546,10 @@ function CafeMenuManagement({
               <p className="text-xs font-bold text-danger bg-red-50 p-3 rounded-xl border border-red-200">{formError}</p>
             )}
 
-            <form onSubmit={handleAddItem} className="space-y-4 text-xs">
+            <form
+                onSubmit={editingItem ? handleEditItem : handleAddItem}
+                className="space-y-4 text-xs"
+            >
               <div className="space-y-1.5">
                 <label className="font-bold text-slate-700">Dish Name *</label>
                 <input
@@ -546,10 +606,9 @@ function CafeMenuManagement({
                 <label className="font-bold text-slate-700">Photo URL</label>
                 <input
                   id="add-menu-photo"
-                  type="text"
-                  placeholder="e.g. https://images.unsplash.com/..."
-                  value={photo}
-                  onChange={(e) => setPhoto(e.target.value)}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setImage(e.target.files?.[0] || null)}
                   className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none"
                 />
               </div>
@@ -567,7 +626,7 @@ function CafeMenuManagement({
                   type="submit"
                   className="flex-1 py-3 bg-primary text-white font-bold rounded-xl hover:bg-secondary min-h-[44px]"
                 >
-                  Save Dish
+                  {editingItem ? "Update Dish" : "Save Dish"}
                 </button>
               </div>
             </form>
@@ -851,42 +910,47 @@ function CafeWaitersPerformance({
 // SUB-PAGE 5: EMPLOYEE USAGE ANALYTICS
 // -----------------------------------------------------------
 function CafeEmployeeUsageAnalytics() {
+  const { apiGet } = useApp();
+
   const [dateRange, setDateRange] = useState('2026-06');
+  const [analytics, setAnalytics] = useState<any>(null);
+
+  useEffect(() => {
+    const loadAnalytics = async () => {
+      try {
+        const res = await apiGet(`/api/cafe/analytics?month=${dateRange}`);
+        setAnalytics(res.data);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    loadAnalytics();
+  }, [dateRange]);
 
   const handleExportVisitors = () => {
-    const data = [
-      { name: 'Samuel Alene', visits: 24 },
-      { name: 'Hirut Kebede', visits: 19 },
-      { name: 'Mekdes Abebe', visits: 18 },
-      { name: 'Dawit Yohannes', visits: 15 },
-      { name: 'Yonas Girmay', visits: 12 },
-    ];
-    exportToExcel(data, 'Cafe_Top_Visitors', 'Visits count');
-  };
+  exportToExcel(
+    analytics?.employee_usage || [],
+    "Cafe_Top_Visitors",
+    "Visitors"
+  );
+};
 
   const handleExportItems = () => {
-    const data = [
-      { name: 'Doro Wot', count: 185 },
-      { name: 'Beyaynetu', count: 144 },
-      { name: 'Tibs', count: 122 },
-      { name: 'Fresh Juice', count: 98 },
-      { name: 'Coffee', count: 90 },
-    ];
-    exportToExcel(data, 'Cafe_Top_Items', 'Units count');
-  };
+  exportToExcel(
+    analytics?.popular_menu_items || [],
+    "Cafe_Top_Items",
+    "Items"
+  );
+};
 
   const handleExportHours = () => {
-    const data = [
-      { hour: '07 AM', Orders: 10 },
-      { hour: '08 AM', Orders: 35 },
-      { hour: '09 AM', Orders: 15 },
-      { hour: '11 AM', Orders: 45 },
-      { hour: '12 PM', Orders: 165 },
-      { hour: '01 PM', Orders: 195 },
-      { hour: '02 PM', Orders: 80 },
-    ];
-    exportToExcel(data, 'Cafe_Peak_Hours', 'Hours count');
-  };
+  exportToExcel(
+    analytics?.peak_ordering_hours || [],
+    "Cafe_Peak_Hours",
+    "Hours"
+  );
+};
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -911,7 +975,9 @@ function CafeEmployeeUsageAnalytics() {
         {/* Visitor Stats */}
         <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
           <h3 className="text-xs font-black text-primary uppercase tracking-wider">Most Frequent Employee Visitors</h3>
-          <FrequentVisitorsChart />
+          <FrequentVisitorsChart
+              data={analytics?.employee_usage || []} 
+          />
           <button
             id="export-visitors-btn"
             onClick={handleExportVisitors}
@@ -924,7 +990,9 @@ function CafeEmployeeUsageAnalytics() {
         {/* Food items stats */}
         <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
           <h3 className="text-xs font-black text-primary uppercase tracking-wider">Most Ordered Menu Items</h3>
-          <MostOrderedItemsChart />
+          <MostOrderedItemsChart
+            data={analytics?.popular_menu_items || []}
+          />
           <button
             id="export-items-btn"
             onClick={handleExportItems}
@@ -937,7 +1005,9 @@ function CafeEmployeeUsageAnalytics() {
         {/* Peak Hours line */}
         <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4 md:col-span-2">
           <h3 className="text-xs font-black text-primary uppercase tracking-wider">Peak Dining Times by Hour</h3>
-          <PeakOrderTimesChart />
+          <PeakOrderTimesChart
+           data={analytics?.peak_ordering_hours || []}
+          />
           <button
             id="export-hours-btn"
             onClick={handleExportHours}
