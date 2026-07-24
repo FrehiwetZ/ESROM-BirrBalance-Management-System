@@ -1,75 +1,27 @@
 import express from "express";
-import { authenticate } from "../middleware/auth.js";
-import { requireRole } from "../middleware/requireRole.js";
-import {
-  generateXLSX,
-  generateCSV,
-  generatePDF,
-} from "../services/report.service.js";
+import { authenticate, requireRole } from "../middleware/auth.middleware.js";
+import { ROLES } from "../config/constants.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { sendReportResponse } from "../utils/report.js";
+import { generateMonthlyReport } from "../services/company.service.js";
+import { validateCompanyReportQuery } from "../validators/company.validators.js";
 
 const router = express.Router();
 
 router.use(authenticate);
-router.use(requireRole("company_manager", "cafe_manager"));
+router.use(requireRole(ROLES.COMPANY_MANAGER, ROLES.CAFE_MANAGER));
 
-router.get("/monthly", async (req, res) => {
-  try {
-    const { month, year, format } = req.query;
+// GET /api/reports/monthly?month=YYYY-MM&format=xlsx|csv|pdf|json
+router.get("/monthly", asyncHandler(async (req, res) => {
+  const actor = req.user;
+  const params = validateCompanyReportQuery(req.query);
+  const report = await generateMonthlyReport(actor, params, req.ip);
 
-    if (!month || !year || !format) {
-      return res.status(400).json({
-        success: false,
-        message: "month, year and format are required",
-        data: null,
-      });
-    }
-
-    if (format === "xlsx") {
-      const buffer = await generateXLSX(parseInt(month), parseInt(year));
-      res.setHeader(
-        "Content-Type",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      );
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename=report-${month}-${year}.xlsx`,
-      );
-      return res.send(buffer);
-    }
-
-    if (format === "csv") {
-      const csv = await generateCSV(parseInt(month), parseInt(year));
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename=report-${month}-${year}.csv`,
-      );
-      return res.send(csv);
-    }
-
-    if (format === "pdf") {
-      const pdf = await generatePDF(parseInt(month), parseInt(year));
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename=report-${month}-${year}.pdf`,
-      );
-      return res.send(pdf);
-    }
-
-    return res.status(400).json({
-      success: false,
-      message: "Invalid format. Use xlsx, csv or pdf",
-      data: null,
-    });
-  } catch (error) {
-    console.error("Report error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      data: null,
-    });
+  if (report.format === "json") {
+    return res.json({ success: true, data: report.data, message: "Monthly report generated successfully" });
   }
-});
+
+  return sendReportResponse(res, report);
+}));
 
 export default router;

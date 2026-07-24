@@ -7,6 +7,7 @@ import {
   getUnreadCount,
   markAllNotificationsRead,
   markNotificationRead,
+  clearAllNotifications,
 } from "../services/notification.service.js";
 import {
   validateNotificationCreate,
@@ -31,6 +32,11 @@ export const markRead = asyncHandler(async (req, res) => {
 export const markAllRead = asyncHandler(async (req, res) => {
   const result = await markAllNotificationsRead(req.user, req.ip);
   return successResponse(res, result, "All notifications marked as read");
+});
+
+export const clearAll = asyncHandler(async (req, res) => {
+  const result = await clearAllNotifications(req.user, req.ip);
+  return successResponse(res, result, "All notifications cleared");
 });
 
 export const createNotificationForUser = asyncHandler(async (req, res) => {

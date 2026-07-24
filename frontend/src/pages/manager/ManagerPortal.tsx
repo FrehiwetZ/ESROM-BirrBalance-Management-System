@@ -33,11 +33,11 @@ import {
   CouponActivityChart,
   BalanceStatusDonut
 } from '../../components/charts/DashboardCharts';
-import { exportToExcel, exportToCSV, exportToPDF, exportMonthlyReportToExcel } from '../../utils/exportHelpers';
+import { exportToExcel, getFileNameFromContentDisposition, downloadBlobFile } from '../../utils/exportHelpers';
 import { formatETB } from '../../utils/format';
 
 export default function ManagerPortal() {
-  const { user, apiGet, apiPost, apiPut, apiDelete, setGlobalLoading } = useApp();
+  const { user, apiGet, apiPost, apiPut, apiDelete, apiDownload, setGlobalLoading } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
@@ -80,7 +80,16 @@ export default function ManagerPortal() {
       setRecentOrders(ords.orders);
 
       const logs = await apiGet('/api/audit-logs');
-      setAuditLogs(logs.auditLogs);
+      const formattedLogs = (logs?.data?.items || logs?.items || []).map((log: any) => ({
+        id: log.id,
+        timestamp: log.created_at,
+        employeeId: log.users?.employee_external_id || (log.user_id ? `ID: ${log.user_id}` : 'System'),
+        userName: log.users?.fullname || (log.user_id ? `User #${log.user_id}` : 'System'),
+        role: log.users?.role || (log.user_id || log.users ? 'User' : 'System'),
+        action: log.action || 'N/A',
+        details: log.description || log.entity_type || '—'
+      }));
+      setAuditLogs(formattedLogs);
 
       const feeds = await apiGet('/api/feedback');
       setFeedbacks(feeds.feedback);
@@ -1418,52 +1427,28 @@ function ManagerReportsPage({
   });
 
   // Exporters
-  const handleExportXLSX = () => {
-    exportMonthlyReportToExcel(filteredRows, 'ESROM_Monthly_Meal_Reconciliation_Report');
+  const exportFinancialReport = async (format: 'xlsx' | 'pdf' | 'csv') => {
+    const month = selectedMonth || new Date().toISOString().slice(0, 7);
+    try {
+      setGlobalLoading(true);
+      const { blob, contentDisposition } = await apiDownload(
+        `/api/company-manager/reports/financial?month=${encodeURIComponent(month)}&format=${format}`
+      );
+      const fileName = getFileNameFromContentDisposition(
+        contentDisposition,
+        `company-financial-report-${month}.${format}`
+      );
+      downloadBlobFile(blob, fileName);
+    } catch (error) {
+      console.error('Failed to download company financial report:', error);
+    } finally {
+      setGlobalLoading(false);
+    }
   };
 
-  const handleExportCSV = () => {
-    const csvData = filteredRows.map(row => ({
-      'Employee ID': row.employeeId,
-      'Employee Name': row.employeeName,
-      Department: row.department,
-      'Total Orders': row.totalOrders,
-      'Total Amount Used (ETB)': row.amountUsed,
-      'Remaining Balance (ETB)': row.remainingBalance,
-      'Waiter Name': row.waiterName,
-      'Food Ordered': row.foodOrdered,
-      Date: row.date ? new Date(row.date).toLocaleDateString() : ''
-    }));
-    exportToCSV(csvData, 'ESROM_Meal_Reconciliation_Report');
-  };
-
-  const handleExportPDF = () => {
-    const headers = [
-      'Employee ID',
-      'Name',
-      'Department',
-      'Orders',
-      'Amount Used',
-      'Remaining',
-      'Date'
-    ];
-    const body = filteredRows.map(row => [
-      row.employeeId,
-      row.employeeName,
-      row.department,
-      row.totalOrders,
-      formatETB(row.amountUsed),
-      formatETB(row.remainingBalance),
-      row.date ? new Date(row.date).toLocaleDateString() : 'N/A'
-    ]);
-
-    exportToPDF(
-      headers,
-      body,
-      'Monthly Meal Reconciliation Report',
-      'ESROM_Monthly_Meal_Reconciliation_Report'
-    );
-  };
+  const handleExportXLSX = () => exportFinancialReport('xlsx');
+  const handleExportCSV = () => exportFinancialReport('csv');
+  const handleExportPDF = () => exportFinancialReport('pdf');
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -1693,39 +1678,100 @@ function ManagerFeedbackPage({ feedbacks }: { feedbacks: any[] }) {
 // -----------------------------------------------------------
 // SUB-PAGE 7: AUDIT LOGS
 // -----------------------------------------------------------
-function ManagerAuditLogsPage({ auditLogs }: { auditLogs: any[] }) {
+function ManagerAuditLogsPage({ auditLogs: initialAuditLogs }: { auditLogs: any[] }) {
+  const { apiGet } = useApp();
+  const [logs, setLogs] = useState<any[]>(initialAuditLogs || []);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [limit] = useState(15);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
   const [roleFilter, setRoleFilter] = useState('');
   const [actionFilter, setActionFilter] = useState('');
 
-  const filteredLogs = auditLogs.filter(log => {
-    const matchesRole = roleFilter ? log.role === roleFilter : true;
-    const matchesAction = actionFilter ? log.action.toLowerCase().includes(actionFilter.toLowerCase()) : true;
-    return matchesRole && matchesAction;
+  const fetchLogs = async (currentPage = page, searchAction = actionFilter) => {
+    setLoading(true);
+    try {
+      let url = `/api/audit-logs?page=${currentPage}&limit=${limit}`;
+      if (searchAction.trim()) {
+        url += `&action=${encodeURIComponent(searchAction.trim())}`;
+      }
+      const res = await apiGet(url);
+      const items = res?.data?.items || res?.items || [];
+      const total = res?.data?.total ?? res?.total ?? items.length;
+      const pages = res?.data?.total_pages ?? res?.total_pages ?? (Math.ceil(total / limit) || 1);
+
+      const formatted = items.map((log: any) => ({
+        id: log.id,
+        timestamp: log.created_at,
+        employeeId: log.users?.employee_external_id || (log.user_id ? `ID: ${log.user_id}` : 'System'),
+        userName: log.users?.fullname || (log.user_id ? `User #${log.user_id}` : 'System'),
+        role: log.users?.role || (log.user_id || log.users ? 'User' : 'System'),
+        action: log.action || 'N/A',
+        details: log.description || log.entity_type || log.ip_address || 'System Activity'
+      }));
+
+      setLogs(formatted);
+      setTotalPages(pages);
+      setTotalCount(total);
+    } catch (e) {
+      console.error('Error loading audit logs', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLogs(1, actionFilter);
+  }, []);
+
+  const handleSearchChange = (val: string) => {
+    setActionFilter(val);
+    setPage(1);
+    fetchLogs(1, val);
+  };
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setPage(newPage);
+      fetchLogs(newPage, actionFilter);
+    }
+  };
+
+  const filteredLogs = logs.filter(log => {
+    const matchesRole = roleFilter ? log.role.toLowerCase() === roleFilter.toLowerCase() : true;
+    return matchesRole;
   });
 
   return (
     <div className="space-y-6 animate-fadeIn">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-extrabold text-primary tracking-tight">Audit Logs</h1>
-        <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Immutable system actions and security logs</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold text-primary tracking-tight">Audit Logs</h1>
+          <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Immutable system actions and security logs</p>
+        </div>
+        <button
+          onClick={() => fetchLogs(page, actionFilter)}
+          className="self-start sm:self-auto px-4 py-2 text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl transition-all cursor-pointer border border-slate-200 dark:border-slate-800"
+        >
+          {loading ? 'Refreshing...' : 'Refresh Logs'}
+        </button>
       </div>
 
       {/* Filters */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-4 rounded-3xl border border-slate-100 shadow-sm text-xs">
         <div className="space-y-1.5">
-          <label className="font-bold text-slate-700">Filter by User Role</label>
+          <label className="font-bold text-slate-700">Filter by User Type</label>
           <select
             id="audit-role-filter"
             value={roleFilter}
             onChange={(e) => setRoleFilter(e.target.value)}
             className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent font-semibold"
           >
-            <option value="">All Roles</option>
-            <option value="manager">Company Manager</option>
-            <option value="cafe">Café Manager</option>
-            <option value="employee">Employee</option>
-            <option value="waiter">Waiter</option>
+            <option value="">All Types</option>
+            <option value="user">User</option>
+            <option value="system">System</option>
           </select>
         </div>
         <div className="space-y-1.5">
@@ -1735,7 +1781,7 @@ function ManagerAuditLogsPage({ auditLogs }: { auditLogs: any[] }) {
             type="text"
             placeholder="Search keywords e.g. login, delete..."
             value={actionFilter}
-            onChange={(e) => setActionFilter(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent"
           />
         </div>
@@ -1750,28 +1796,65 @@ function ManagerAuditLogsPage({ auditLogs }: { auditLogs: any[] }) {
                 <th className="py-4 px-6">Timestamp</th>
                 <th className="py-4 px-4">User ID</th>
                 <th className="py-4 px-4">User Name</th>
-                <th className="py-4 px-4">Role</th>
+                <th className="py-4 px-4">Role / Type</th>
                 <th className="py-4 px-4">Action</th>
                 <th className="py-4 px-6">Details</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs font-mono">
-              {filteredLogs.map((log) => (
-                <tr key={log.id} className="hover:bg-slate-50/40 transition-colors">
-                  <td className="py-3 px-6 text-slate-400 font-semibold">{new Date(log.timestamp).toLocaleString()}</td>
-                  <td className="py-3 px-4 font-bold text-slate-500">{log.employeeId}</td>
-                  <td className="py-3 px-4 font-sans font-bold text-primary">{log.userName}</td>
-                  <td className="py-3 px-4 font-sans">
-                    <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-slate-100 text-slate-600">
-                      {log.role}
-                    </span>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-400 font-sans">
+                    Loading audit records...
                   </td>
-                  <td className="py-3 px-4 font-sans font-bold text-secondary">{log.action}</td>
-                  <td className="py-3 px-6 font-sans text-slate-600 font-medium">{log.details}</td>
                 </tr>
-              ))}
+              ) : filteredLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-400 font-sans">
+                    No audit log records found.
+                  </td>
+                </tr>
+              ) : (
+                filteredLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-slate-50/40 transition-colors">
+                    <td className="py-3 px-6 text-slate-400 font-semibold">{log.timestamp ? new Date(log.timestamp).toLocaleString() : 'N/A'}</td>
+                    <td className="py-3 px-4 font-bold text-slate-500">{log.employeeId}</td>
+                    <td className="py-3 px-4 font-sans font-bold text-primary">{log.userName}</td>
+                    <td className="py-3 px-4 font-sans">
+                      <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-slate-100 text-slate-600">
+                        {log.role}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 font-sans font-bold text-secondary">{log.action}</td>
+                    <td className="py-3 px-6 font-sans text-slate-600 font-medium">{log.details}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination controls */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 text-xs font-sans">
+          <span className="text-slate-500 font-medium">
+            Page {page} of {totalPages} ({totalCount} total entries)
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handlePageChange(page - 1)}
+              disabled={page <= 1 || loading}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 font-bold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => handlePageChange(page + 1)}
+              disabled={page >= totalPages || loading}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 font-bold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -149,6 +149,27 @@ export const markAllNotificationsRead = async (user, ipAddress) => {
   });
 };
 
+export const clearAllNotifications = async (user, ipAddress) => {
+  return prisma.$transaction(async (tx) => {
+    const result = await tx.notifications.deleteMany({
+      where: { user_id: user.id },
+    });
+
+    await writeAuditLog(
+      {
+        userId: user.id,
+        action: "notification.clear_all",
+        entityType: "notifications",
+        description: `Cleared ${result.count} notifications`,
+        ipAddress,
+      },
+      tx,
+    );
+
+    return result;
+  });
+};
+
 export const notifyAllocation = (userId, amount, actor, ipAddress, tx = prisma) => {
   return createNotification(
     {
