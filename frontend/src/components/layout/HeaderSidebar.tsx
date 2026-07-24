@@ -148,7 +148,7 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
       <div className="p-4 border-t border-border-default">
         <div className="flex items-center gap-3 xl:p-2 md:p-0 rounded-xl xl:bg-card-hover md:bg-transparent xl:border xl:border-border-default/40 md:border-none mb-3 xl:justify-start md:justify-center">
           <div className="w-9 h-9 rounded-full bg-brand-primary flex items-center justify-center font-bold text-white uppercase shadow flex-shrink-0">
-            {user.fullname.charAt(0)}
+            {user?.fullName?.charAt(0) || "?"}
           </div>
           <div className="flex-1 overflow-hidden xl:block md:hidden block">
             <h4 className="text-xs font-bold text-text-primary truncate">{user?.fullname}</h4>
@@ -459,7 +459,7 @@ export function TopNav({ onMenuClick }: { onMenuClick?: () => void }) {
                 className="flex items-center gap-2 p-1 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 transition-all min-h-[44px] cursor-pointer"
               >
                 <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center font-bold text-white uppercase shadow-inner flex-shrink-0">
-                  {user.fullname.charAt(0)}
+                  {user?.fullname?.charAt(0) || "?"}
                 </div>
                 <span className="hidden xl:inline text-xs font-bold text-text-primary max-w-[120px] truncate">
                   {user.fullname}

@@ -28,10 +28,10 @@ import {
   MostOrderedItemsChart,
   PeakOrderTimesChart
 } from '../../components/charts/DashboardCharts';
-import { exportToExcel, exportToCSV, exportToPDF } from '../../utils/exportHelpers';
+import { exportToExcel, getFileNameFromContentDisposition, downloadBlobFile } from '../../utils/exportHelpers';
 
 export default function CafePortal() {
-  const { user, apiGet, apiPost, apiPut, apiDelete, setGlobalLoading } = useApp();
+  const { user, apiGet, apiPost, apiPut, apiDelete, apiDownload, setGlobalLoading } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
@@ -955,53 +955,39 @@ function CafeEmployeeUsageAnalytics() {
 // SUB-PAGE 6: OPERATIONAL REPORTS
 // -----------------------------------------------------------
 function CafeOperationalReports({ orders }: { orders: any[] }) {
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [reportMonth, setReportMonth] = useState(() => new Date().toISOString().slice(0, 7));
 
-  const reportOrders = orders.filter(o => o.status === 'confirmed');
+  const reportOrders = orders
+    .filter(o => o.status === 'confirmed')
+    .filter(o => {
+      if (!reportMonth) return true;
+      const orderMonth = new Date(o.date).toISOString().slice(0, 7);
+      return orderMonth === reportMonth;
+    });
   const totalRevenue = reportOrders.reduce((sum, o) => sum + o.amount, 0);
 
-  const handleExportXLSX = () => {
-    const data = reportOrders.map(o => ({
-      'Order ID': o.id,
-      'Employee ID': o.employeeId,
-      'Employee Name': o.employeeName,
-      Department: o.department,
-      Items: o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', '),
-      'Amount (ETB)': o.amount,
-      'Waiter Name': o.waiterName,
-      Date: new Date(o.date).toLocaleDateString(),
-    }));
-    exportToExcel(data, 'Cafe_Operational_Report', 'Sales');
+  const exportOperationalReport = async (format: 'xlsx' | 'pdf' | 'csv') => {
+    const month = reportMonth || new Date().toISOString().slice(0, 7);
+    try {
+      setGlobalLoading(true);
+      const { blob, contentDisposition } = await apiDownload(
+        `/api/cafe/reports/operational?month=${encodeURIComponent(month)}&format=${format}`
+      );
+      const fileName = getFileNameFromContentDisposition(
+        contentDisposition,
+        `cafe-operational-report-${month}.${format}`
+      );
+      downloadBlobFile(blob, fileName);
+    } catch (error) {
+      console.error('Failed to download cafe operational report:', error);
+    } finally {
+      setGlobalLoading(false);
+    }
   };
 
-  const handleExportCSV = () => {
-    const data = reportOrders.map(o => ({
-      'Order ID': o.id,
-      'Employee ID': o.employeeId,
-      'Employee Name': o.employeeName,
-      Department: o.department,
-      Items: o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', '),
-      'Amount (ETB)': o.amount,
-      'Waiter Name': o.waiterName,
-      Date: new Date(o.date).toLocaleDateString(),
-    }));
-    exportToCSV(data, 'Cafe_Operational_Report');
-  };
-
-  const handleExportPDF = () => {
-    const headers = ['Order ID', 'Employee Name', 'Items', 'Amount', 'Waiter', 'Date'];
-    const body = reportOrders.map(o => [
-      o.id,
-      o.employeeName,
-      o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', '),
-      `ETB ${o.amount}`,
-      o.waiterName,
-      new Date(o.date).toLocaleDateString(),
-    ]);
-
-    exportToPDF(headers, body, 'Café Operations Sales Report', 'Cafe_Operational_Sales_Report');
-  };
+  const handleExportXLSX = () => exportOperationalReport('xlsx');
+  const handleExportCSV = () => exportOperationalReport('csv');
+  const handleExportPDF = () => exportOperationalReport('pdf');
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -1014,22 +1000,12 @@ function CafeOperationalReports({ orders }: { orders: any[] }) {
       {/* Date Pickers */}
       <div className="flex flex-col md:flex-row gap-4 items-end bg-white p-5 rounded-3xl border border-slate-100 shadow-sm text-xs">
         <div className="space-y-1.5 w-full md:w-auto">
-          <label className="font-bold text-slate-700">Start Date</label>
+          <label className="font-bold text-slate-700">Report Month</label>
           <input
-            id="ops-start-date"
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent font-semibold w-full"
-          />
-        </div>
-        <div className="space-y-1.5 w-full md:w-auto">
-          <label className="font-bold text-slate-700">End Date</label>
-          <input
-            id="ops-end-date"
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
+            id="ops-report-month"
+            type="month"
+            value={reportMonth}
+            onChange={(e) => setReportMonth(e.target.value)}
             className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent font-semibold w-full"
           />
         </div>

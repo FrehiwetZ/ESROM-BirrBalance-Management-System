@@ -81,6 +81,27 @@ export function exportToCSV(data: any[], fileName: string) {
   }
 }
 
+export function getFileNameFromContentDisposition(contentDisposition?: string | null, fallback: string = 'download') {
+  if (!contentDisposition) return fallback;
+  const match = /filename\*=UTF-8''([^;]+)|filename\s*=\s*"?([^";]+)"?/i.exec(contentDisposition);
+  const fileName = match ? decodeURIComponent(match[1] || match[2] || '') : fallback;
+  return fileName || fallback;
+}
+
+// Alias for backward compatibility
+export const getFileNameFromDisposition = getFileNameFromContentDisposition;
+
+export function downloadBlobFile(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 // Export to PDF using jsPDF and jspdf-autotable
 export function exportToPDF(headers: string[], body: any[][], title: string, fileName: string) {
   const doc = new jsPDF('p', 'pt', 'a4');

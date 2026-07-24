@@ -39,7 +39,9 @@ interface AppContextType {
   apiGet: (path: string) => Promise<any>;
   apiPost: (path: string, body: any) => Promise<any>;
   apiPut: (path: string, body: any) => Promise<any>;
+  apiPatch: (path: string, body: any) => Promise<any>;
   apiDelete: (path: string) => Promise<any>;
+  apiDownload: (path: string) => Promise<{ blob: Blob; contentDisposition?: string | null }>;
 }
 
 // Normalizes field names between the real backend's snake_case API
@@ -56,6 +58,14 @@ function normalizeApiData<T = any>(data: any): T {
         result['fullName'] = value;
       } else if (key === 'employee_external_id') {
         result['employeeId'] = value;
+      } else if (key === 'is_active') {
+        result['isActive'] = value;
+      } else if (key === 'created_at') {
+        result['createdAt'] = value;
+      } else if (key === 'updated_at') {
+        result['updatedAt'] = value;
+      } else if (key === 'user_id') {
+        result['userId'] = value;
       } else {
         result[key] = value;
       }
@@ -65,10 +75,26 @@ function normalizeApiData<T = any>(data: any): T {
   return data;
 }
 
+export function normalizeRole(role?: string | null) {
+  if (!role) return null;
+
+  const normalizedRole = role.toLowerCase();
+  if (normalizedRole === 'company_manager') return 'manager';
+  if (normalizedRole === 'cafe_manager') return 'cafe';
+  return normalizedRole;
+}
+
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const u = localStorage.getItem('user');
+      return u ? JSON.parse(u) : null;
+    } catch {
+      return null;
+    }
+  });
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const { theme, toggleTheme } = useTheme();
   const [language, setLangState] = useState<'en' | 'am'>((localStorage.getItem('esrom_lang') as 'en' | 'am') || 'en');
@@ -84,18 +110,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   // Synced state triggers
-  const apiGet = useCallback(async (path: string) => {
+  // Attempt to refresh token using stored refresh_token
+  const attemptRefresh = useCallback(async () => {
+    const refreshToken = localStorage.getItem('refresh_token');
+    if (!refreshToken || isOffline) return false;
+    try {
+      const res = await fetch('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken })
+      });
+      if (!res.ok) return false;
+      const json = await res.json();
+      const newToken = json.data?.token || json.token;
+      const newRefresh = json.data?.refresh_token || json.refresh_token;
+      if (newToken) {
+        localStorage.setItem('token', newToken);
+        setToken(newToken);
+      }
+      if (newRefresh) {
+        localStorage.setItem('refresh_token', newRefresh);
+      }
+      return true;
+    } catch (e) {
+      console.error('Refresh token failed', e);
+      return false;
+    }
+  }, [isOffline]);
+
+  // Core fetch helper that retries once after refresh
+  const performFetch = useCallback(async (path: string, opts: RequestInit = {}, retry = true) => {
     if (isOffline) {
       throw new Error('Offline mode active. API calls unavailable.');
     }
-    const headers: HeadersInit = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    const response = await fetch(path, { headers });
+    const currentToken = localStorage.getItem('token') || token;
+    const headers: any = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+    if (currentToken) headers['Authorization'] = `Bearer ${currentToken}`;
+    const response = await fetch(path, { ...opts, headers });
     if (response.status === 401) {
+      if (retry) {
+        const ok = await attemptRefresh();
+        if (ok) {
+          // retry once with fresh token read directly from localStorage
+          return performFetch(path, opts, false);
+        }
+      }
+      // logout
       localStorage.removeItem('token');
       localStorage.removeItem('role');
+      localStorage.removeItem('user');
+      localStorage.removeItem('refresh_token');
       setToken(null);
       setUser(null);
       throw new Error('Your session has expired');
@@ -104,105 +168,76 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const err = await response.json().catch(() => ({ message: 'API error' }));
       throw new Error(err.message || 'API error');
     }
-    return response.json();
-  }, [token, isOffline]);
+    return response;
+  }, [token, isOffline, attemptRefresh]);
+
+  const apiGet = useCallback(async (path: string) => {
+    const res = await performFetch(path, { method: 'GET' });
+    return res.json();
+  }, [performFetch]);
 
   const apiPost = useCallback(async (path: string, body: any) => {
-    if (isOffline) {
-      throw new Error('Offline mode active. API calls unavailable.');
-    }
-    const headers: HeadersInit = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    const response = await fetch(path, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body)
-    });
-    if (response.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      setToken(null);
-      setUser(null);
-      throw new Error('Your session has expired');
-    }
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
-    }
-    const json = await response.json();
-return normalizeApiData(json);;
-  }, [token, isOffline]);
+    const res = await performFetch(path, { method: 'POST', body: JSON.stringify(body) });
+    const json = await res.json();
+    return normalizeApiData(json);
+  }, [performFetch]);
 
   const apiPut = useCallback(async (path: string, body: any) => {
-    if (isOffline) {
-      throw new Error('Offline mode active. API calls unavailable.');
-    }
-    const headers: HeadersInit = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    const response = await fetch(path, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify(body)
-    });
-    if (response.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      setToken(null);
-      setUser(null);
-      throw new Error('Your session has expired');
-    }
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
-    }
-    const json = await response.json();
+    const res = await performFetch(path, { method: 'PUT', body: JSON.stringify(body) });
+    const json = await res.json();
     return normalizeApiData(json);
-  }, [token, isOffline]);
+  }, [performFetch]);
+
+  const apiPatch = useCallback(async (path: string, body: any) => {
+    const res = await performFetch(path, { method: 'PATCH', body: JSON.stringify(body) });
+    const json = await res.json();
+    return normalizeApiData(json);
+  }, [performFetch]);
 
   const apiDelete = useCallback(async (path: string) => {
-    if (isOffline) {
-      throw new Error('Offline mode active. API calls unavailable.');
-    }
-    const headers: HeadersInit = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    const response = await fetch(path, {
-      method: 'DELETE',
-      headers
-    });
-    if (response.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      setToken(null);
-      setUser(null);
-      throw new Error('Your session has expired');
-    }
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
-    }
-    const json = await response.json();
-return normalizeApiData(json);;
-  }, [token, isOffline]);
+    const res = await performFetch(path, { method: 'DELETE' });
+    const json = await res.json();
+    return normalizeApiData(json);
+  }, [performFetch]);
 
-  // Auth fetch
+  const apiDownload = useCallback(async (path: string) => {
+    const res = await performFetch(path, { method: 'GET' });
+    const blob = await res.blob();
+    return { blob, contentDisposition: res.headers.get('Content-Disposition') };
+  }, [performFetch]);
+
+  // Auth fetch - ask server for the current employee profile only if role is employee
   const fetchMe = useCallback(async () => {
-  if (!token || isOffline) return;
-  const cached = localStorage.getItem('user');
-  if (cached) {
-    setUser(JSON.parse(cached));
-    return;
-  }
-  setUser(null);
-  setToken(null);
-  localStorage.removeItem('token');
-  localStorage.removeItem('role');
-}, [token, isOffline]);
+    const activeToken = localStorage.getItem('token') || token;
+    if (!activeToken || isOffline) return;
+
+    const storedRole = localStorage.getItem('role');
+    const storedUserStr = localStorage.getItem('user');
+
+    if (storedRole && storedRole !== 'employee') {
+      if (storedUserStr) {
+        try {
+          setUser(JSON.parse(storedUserStr));
+        } catch (e) {
+          console.error('Error parsing stored user', e);
+        }
+      }
+      return;
+    }
+
+    try {
+      const res = await apiGet('/api/employee/profile');
+      const apiUser = normalizeApiData(res.data || res);
+
+      const mappedRole = normalizeRole(apiUser.roles?.[0]);
+      const userData = { ...apiUser, role: mappedRole || apiUser.role || 'employee' };
+      setUser(userData);
+      localStorage.setItem('user', JSON.stringify(userData));
+      if (mappedRole) localStorage.setItem('role', mappedRole);
+    } catch (e) {
+      console.error('Failed fetching profile', e);
+    }
+  }, [token, isOffline, apiGet]);
 
   useEffect(() => {
     if (token) {
@@ -228,26 +263,63 @@ return normalizeApiData(json);;
 
   // Fetch notifications
   const fetchNotifications = useCallback(async () => {
-    if (!token || isOffline) return;
+    const activeToken = localStorage.getItem('token') || token;
+    if (!activeToken || isOffline) return;
+
     try {
-      const data = await apiGet('/api/employee/notifications');
-      setNotifications(data.notifications || []);
-      setUnreadCount((data.notifications || []).filter((n: any) => !n.read).length);
-    } catch (e) {
-      console.error('Error loading notifications', e);
+      const res = await apiGet('/api/notifications');
+      const rawItems = res?.data?.items || res?.items || (Array.isArray(res?.data) ? res.data : []);
+
+      const items = rawItems.map((n: any) => ({
+        id: n.id,
+        title: n.title,
+        message: n.message,
+        type: n.type,
+        read: n.is_read,
+        timestamp: n.created_at ? new Date(n.created_at).toLocaleString() : '',
+      }));
+
+      setNotifications(items);
+    } catch (error) {
+      console.error("Error loading notifications", error);
     }
   }, [token, apiGet, isOffline]);
 
-  useEffect(() => {
-    if (token) {
-      fetchNotifications();
-      // Setup dynamic poll for live updates
-      const interval = setInterval(() => {
-        fetchNotifications();
-      }, 7000);
-      return () => clearInterval(interval);
+  const fetchUnreadCount = useCallback(async () => {
+    const activeToken = localStorage.getItem('token') || token;
+    if (!activeToken || isOffline) return;
+
+    try {
+      const res = await apiGet('/api/notifications/unread-count');
+      const count = res?.data?.count ?? res?.count ?? 0;
+      setUnreadCount(count);
+    } catch (error) {
+      console.error(error);
     }
-  }, [token, fetchNotifications]);
+  }, [token, apiGet, isOffline]);
+
+
+  useEffect(() => {
+
+  if (!token) return;
+
+  fetchNotifications();
+  fetchUnreadCount();
+
+  const interval = setInterval(() => {
+
+    fetchNotifications();
+    fetchUnreadCount();
+
+  },7000);
+
+  return ()=>clearInterval(interval);
+
+},[
+token,
+fetchNotifications,
+fetchUnreadCount
+]);
 
   // Theme is handled in ThemeContext
 
@@ -263,14 +335,11 @@ const login = async (employeeId: string, password: string): Promise<any> => {
     const res = await apiPost('/api/auth/login', { employee_external_id: employeeId, password });
     const { token, refresh_token, user: apiUser } = res.data;
 
-    let mappedRole = apiUser.roles[0];
-    if (mappedRole === 'company_manager') mappedRole = 'manager';
-    else if (mappedRole === 'cafe_manager') mappedRole = 'cafe';
-
-    const userData = { ...apiUser, role: mappedRole };
+    const mappedRole = normalizeRole(apiUser.roles[0]);
+    const userData = { ...apiUser, role: mappedRole || apiUser.role || 'employee' };
 
     localStorage.setItem('token', token);
-    localStorage.setItem('role', mappedRole);
+    localStorage.setItem('role', mappedRole || userData.role || 'employee');
     localStorage.setItem('user', JSON.stringify(userData));
     if (refresh_token) localStorage.setItem('refresh_token', refresh_token);
 
@@ -332,7 +401,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
   const markNotificationsAsRead = async () => {
     if (!token || isOffline) return;
     try {
-      await apiPost('/api/notifications/read-all', {});
+      await apiPatch('/api/notifications/read-all', {});
       setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
       setUnreadCount(0);
     } catch (e) {
@@ -373,6 +442,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
   const refreshData = async () => {
     await fetchMe();
     await fetchNotifications();
+    await fetchUnreadCount();
   };
 
   return (
@@ -409,7 +479,9 @@ const login = async (employeeId: string, password: string): Promise<any> => {
         apiGet,
         apiPost,
         apiPut,
-        apiDelete
+        apiPatch,
+        apiDelete,
+        apiDownload
       }}
     >
       {children}
