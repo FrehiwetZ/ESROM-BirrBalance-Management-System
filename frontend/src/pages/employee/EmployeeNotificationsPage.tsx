@@ -14,7 +14,8 @@ import {
   CheckCircle2,
   Receipt,
   Eye,
-  Wallet
+  Wallet,
+  RefreshCcw
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -24,7 +25,7 @@ export default function EmployeeNotificationsPage() {
     notifications, 
     unreadCount, 
     markNotificationsAsRead, 
-    apiPost, 
+    apiPatch, 
     apiGet,
     refreshData 
   } = useApp();
@@ -43,10 +44,12 @@ export default function EmployeeNotificationsPage() {
   const loadMyOrders = async () => {
     setLoadingOrders(true);
     try {
-      const data = await apiGet('/api/orders/my-orders');
-      setMyOrders(data.orders || []);
+      const data = await apiGet('/api/employee/orders');
+      const items = data?.data?.items || data?.items || data?.orders || [];
+      setMyOrders(items);
     } catch (e) {
       console.error('Error fetching orders for notifications view', e);
+      setMyOrders([]);
     } finally {
       setLoadingOrders(false);
     }
@@ -66,7 +69,7 @@ export default function EmployeeNotificationsPage() {
     if (isRead) return;
     try {
       setLocalLoading(id);
-      await apiPost(`/api/notifications/${id}/read`, {});
+      await apiPatch(`/api/notifications/${id}/read`, {});
       await refreshData();
     } catch (e) {
       console.error('Error marking notification as read', e);
@@ -79,7 +82,7 @@ export default function EmployeeNotificationsPage() {
   const handleClearAll = async () => {
     if (window.confirm('Are you sure you want to clear all your notifications? This action cannot be undone.')) {
       try {
-        await apiPost('/api/notifications/clear-all', {});
+        await apiPatch('/api/notifications/clear-all', {});
         await refreshData();
       } catch (e) {
         console.error('Error clearing notifications', e);
@@ -276,24 +279,28 @@ export default function EmployeeNotificationsPage() {
         </div>
 
         {/* Global actions */}
-        {notifications.length > 0 && (
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-            {unreadCount > 0 && (
-              <button
-                onClick={markNotificationsAsRead}
-                className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold bg-green-50 hover:bg-green-100 dark:bg-green-950/20 dark:hover:bg-green-900/30 text-success rounded-xl border border-green-200/50 dark:border-green-900/40 transition-all cursor-pointer"
-              >
-                <Check className="w-3.5 h-3.5" /> Mark All Read
-              </button>
-            )}
+        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+          <button
+            onClick={refreshData}
+            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl border border-slate-200 dark:border-slate-800 transition-all cursor-pointer"
+          >
+            <RefreshCcw className="w-3.5 h-3.5" /> Refresh
+          </button>
+          {unreadCount > 0 && (
             <button
-              onClick={handleClearAll}
-              className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold bg-red-50 hover:bg-red-100 dark:bg-red-950/20 dark:hover:bg-red-900/30 text-danger rounded-xl border border-red-200/50 dark:border-red-900/40 transition-all cursor-pointer"
+              onClick={markNotificationsAsRead}
+              className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold bg-green-50 hover:bg-green-100 dark:bg-green-950/20 dark:hover:bg-green-900/30 text-success rounded-xl border border-green-200/50 dark:border-green-900/40 transition-all cursor-pointer"
             >
-              <Trash2 className="w-3.5 h-3.5" /> Clear All
+              <Check className="w-3.5 h-3.5" /> Mark All Read
             </button>
-          </div>
-        )}
+          )}
+          <button
+            onClick={handleClearAll}
+            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold bg-red-50 hover:bg-red-100 dark:bg-red-950/20 dark:hover:bg-red-900/30 text-danger rounded-xl border border-red-200/50 dark:border-red-900/40 transition-all cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Clear All
+          </button>
+        </div>
       </div>
 
       {/* 3. Notification Feed */}

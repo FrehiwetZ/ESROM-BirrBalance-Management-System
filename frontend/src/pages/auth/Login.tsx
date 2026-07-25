@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useApp } from '../../context/AppContext';
+import { normalizeRole, useApp } from '../../context/AppContext';
 import { useTranslation } from 'react-i18next';
 import { Eye, EyeOff, ShieldAlert, KeyRound, UserSquare2, Sparkles } from 'lucide-react';
 import { EsromLogo } from '../../components/layout/HeaderSidebar';
@@ -39,10 +39,10 @@ export default function Login() {
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    const role = localStorage.getItem("role");
+    const role = normalizeRole(localStorage.getItem("role"));
     if (token && role) {
-      if (role === "company_manager") navigate("/manager/dashboard");
-      else if (role === "cafe_manager") navigate("/cafe/dashboard");
+      if (role === "manager") navigate("/manager/dashboard");
+      else if (role === "cafe") navigate("/cafe/dashboard");
       else if (role === "employee") navigate("/employee/dashboard");
       else if (role === "waiter") navigate("/waiter/panel");
     }
@@ -62,9 +62,9 @@ export default function Login() {
     await login(employeeId.toUpperCase(), password);
     // AppContext already set token, role, and user in localStorage
     // Just grab the role and navigate
-    const role = localStorage.getItem('role');
-    if (role === "company_manager") navigate("/manager/dashboard");
-    else if (role === "cafe_manager") navigate("/cafe/dashboard");
+    const role = normalizeRole(localStorage.getItem('role'));
+    if (role === "manager") navigate("/manager/dashboard");
+    else if (role === "cafe") navigate("/cafe/dashboard");
     else if (role === "employee") navigate("/employee/dashboard");
     else if (role === "waiter") navigate("/waiter/panel");
     else navigate("/login");

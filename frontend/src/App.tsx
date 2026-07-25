@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { useApp } from './context/AppContext';
+import { normalizeRole, useApp } from './context/AppContext';
 import { Sidebar, TopNav } from './components/layout/HeaderSidebar';
 import Login from './pages/auth/Login';
 import ManagerPortal from './pages/manager/ManagerPortal';
@@ -13,9 +13,11 @@ import { ShieldAlert, AlertTriangle, Menu, LogOut } from 'lucide-react';
 // Wrapper for Protected Routes with Role Checks
 const ProtectedRoute = ({ children, allowedRole }: { children: React.ReactNode; allowedRole?: string }) => {
   const token = localStorage.getItem("token");
-  const role = localStorage.getItem("role");
+  const role = normalizeRole(localStorage.getItem("role"));
+  const normalizedAllowedRole = normalizeRole(allowedRole);
+
   if (!token) return <Navigate to="/login" replace />;
-  if (allowedRole && role !== allowedRole) return <Navigate to="/login" replace />;
+  if (normalizedAllowedRole && role !== normalizedAllowedRole) return <Navigate to="/login" replace />;
   return <>{children}</>;
 };
 
@@ -107,7 +109,7 @@ function NotFound() {
 
 export default function App() {
   const token = localStorage.getItem("token");
-  const role = localStorage.getItem("role");
+  const role = normalizeRole(localStorage.getItem("role"));
 
   return (
     <>
@@ -119,10 +121,10 @@ export default function App() {
             token && role ? (
               <Navigate
                 to={
-                  role === 'company_manager' ? '/manager/dashboard' :
-                  role === 'cafe_manager' ? '/cafe/dashboard' :
+                  role === 'manager' ? '/manager/dashboard' :
+                  role === 'cafe' ? '/cafe/dashboard' :
                   role === 'employee' ? '/employee/dashboard' :
-                  '/waiter/panel'
+                  role === 'waiter' ? '/waiter/panel' : '/login'
                 }
                 replace
               />
