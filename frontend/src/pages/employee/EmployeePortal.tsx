@@ -881,18 +881,20 @@ function EmployeePlaceOrder({
             </p>
             <div className="flex justify-between font-mono">
               <span>Order Ticket ID:</span>
-              <span className="font-bold text-primary">{successOrder.id}</span>
+              <span className="font-bold text-primary">
+                {successOrder.order_id}
+              </span>
             </div>
             <div className="flex justify-between font-mono">
               <span>ETB Used:</span>
               <span className="font-bold text-danger">
-                -{formatETB(successOrder.amount)}
+                -{formatETB(successOrder.total_amount)}
               </span>
             </div>
             <div className="flex justify-between font-mono pt-1.5 border-t">
               <span>Remaining ETB:</span>
               <span className="font-bold text-success">
-                {formatETB(user.balance)}
+                {formatETB(successOrder.remaining_balance)}
               </span>
             </div>
           </div>
