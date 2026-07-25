@@ -88,7 +88,17 @@ function normalizeApiData<T = any>(data: any): T {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    const cachedUser = localStorage.getItem("user");
+    if (!cachedUser) return null;
+
+    try {
+      return JSON.parse(cachedUser) as User;
+    } catch {
+      localStorage.removeItem("user");
+      return null;
+    }
+  });
   const [token, setToken] = useState<string | null>(
     localStorage.getItem("token"),
   );
@@ -275,6 +285,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem("role");
     }
   }, [token, isOffline, apiGet]);
+
+  // Rehydrate the authenticated employee after a full page reload. The cached
+  // user above lets the portal render immediately while this refreshes current
+  // profile and balance data from the API.
+  useEffect(() => {
+    const currentRole = localStorage.getItem("role");
+    if (token && currentRole === "employee" && !isOffline) {
+      fetchMe();
+    }
+  }, [token, isOffline, fetchMe]);
 
   // Listen to offline/online events
   useEffect(() => {
