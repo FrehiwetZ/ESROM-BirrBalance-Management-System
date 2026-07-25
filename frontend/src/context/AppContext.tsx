@@ -1,27 +1,47 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import i18n from '../i18n/i18n';
-import { useTheme } from './ThemeContext';
-import { User, MenuItem, Order, Feedback, AuditLog, Message, Conversation, WaiterPerformance } from '../types';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+} from "react";
+import i18n from "../i18n/i18n";
+import { useTheme } from "./ThemeContext";
+import {
+  User,
+  MenuItem,
+  Order,
+  Feedback,
+  AuditLog,
+  Message,
+  Conversation,
+  WaiterPerformance,
+} from "../types";
 
 interface AppContextType {
   user: User | null;
   token: string | null;
-  theme: 'light' | 'dark';
-  language: 'en' | 'am';
+  theme: "light" | "dark";
+  language: "en" | "am";
   cart: { item: MenuItem; quantity: number }[];
   offlineQueue: any[];
   isOffline: boolean;
   notifications: any[];
   unreadCount: number;
   globalLoading: boolean;
-  activeCafe: { id: string; name: string; location: string; image: string } | null;
+  activeCafe: {
+    id: string;
+    name: string;
+    location: string;
+    image: string;
+  } | null;
   setActiveCafe: (cafe: any) => void;
   showLogoutModal: boolean;
   setShowLogoutModal: (show: boolean) => void;
-  
+
   // Actions
   toggleTheme: () => void;
-  setLanguage: (lang: 'en' | 'am') => void;
+  setLanguage: (lang: "en" | "am") => void;
   login: (employeeId: string, password: string) => Promise<any>;
   logout: () => void;
   addToCart: (item: MenuItem) => void;
@@ -33,7 +53,7 @@ interface AppContextType {
   triggerSync: () => Promise<void>;
   addToOfflineQueue: (order: any) => void;
   setGlobalLoading: (loading: boolean) => void;
-  
+
   // API triggers
   refreshData: () => Promise<void>;
   apiGet: (path: string) => Promise<any>;
@@ -48,14 +68,14 @@ function normalizeApiData<T = any>(data: any): T {
   if (Array.isArray(data)) {
     return data.map(normalizeApiData) as any;
   }
-  if (data && typeof data === 'object') {
+  if (data && typeof data === "object") {
     const result: any = {};
     for (const key of Object.keys(data)) {
       const value = normalizeApiData(data[key]);
-      if (key === 'fullname') {
-        result['fullName'] = value;
-      } else if (key === 'employee_external_id') {
-        result['employeeId'] = value;
+      if (key === "fullname") {
+        result["fullName"] = value;
+      } else if (key === "employee_external_id") {
+        result["employeeId"] = value;
       } else {
         result[key] = value;
       }
@@ -69,12 +89,16 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
+  const [token, setToken] = useState<string | null>(
+    localStorage.getItem("token"),
+  );
   const { theme, toggleTheme } = useTheme();
-  const [language, setLangState] = useState<'en' | 'am'>((localStorage.getItem('esrom_lang') as 'en' | 'am') || 'en');
+  const [language, setLangState] = useState<"en" | "am">(
+    (localStorage.getItem("esrom_lang") as "en" | "am") || "en",
+  );
   const [cart, setCart] = useState<{ item: MenuItem; quantity: number }[]>([]);
   const [offlineQueue, setOfflineQueue] = useState<any[]>(() => {
-    return JSON.parse(localStorage.getItem('esrom_offline_queue') || '[]');
+    return JSON.parse(localStorage.getItem("esrom_offline_queue") || "[]");
   });
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -84,131 +108,173 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   // Synced state triggers
-  const apiGet = useCallback(async (path: string) => {
-    if (isOffline) {
-      throw new Error('Offline mode active. API calls unavailable.');
-    }
-    const headers: HeadersInit = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    const response = await fetch(path, { headers });
-    if (response.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      setToken(null);
-      setUser(null);
-      throw new Error('Your session has expired');
-    }
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
-    }
-    return response.json();
-  }, [token, isOffline]);
+  const apiGet = useCallback(
+    async (path: string) => {
+      if (isOffline) {
+        throw new Error("Offline mode active. API calls unavailable.");
+      }
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      const response = await fetch(path, { headers });
+      if (response.status === 401) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("role");
+        setToken(null);
+        setUser(null);
+        throw new Error("Your session has expired");
+      }
+      if (!response.ok) {
+        const err = await response
+          .json()
+          .catch(() => ({ message: "API error" }));
+        throw new Error(err.message || "API error");
+      }
+      const json = await response.json();
+      return normalizeApiData(json);
+    },
+    [token, isOffline],
+  );
 
-  const apiPost = useCallback(async (path: string, body: any) => {
-    if (isOffline) {
-      throw new Error('Offline mode active. API calls unavailable.');
-    }
-    const headers: HeadersInit = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    const response = await fetch(path, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body)
-    });
-    if (response.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      setToken(null);
-      setUser(null);
-      throw new Error('Your session has expired');
-    }
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
-    }
-    const json = await response.json();
-return normalizeApiData(json);;
-  }, [token, isOffline]);
+  const apiPost = useCallback(
+    async (path: string, body: any) => {
+      if (isOffline) {
+        throw new Error("Offline mode active. API calls unavailable.");
+      }
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      const response = await fetch(path, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
 
-  const apiPut = useCallback(async (path: string, body: any) => {
-    if (isOffline) {
-      throw new Error('Offline mode active. API calls unavailable.');
-    }
-    const headers: HeadersInit = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    const response = await fetch(path, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify(body)
-    });
-    if (response.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      setToken(null);
-      setUser(null);
-      throw new Error('Your session has expired');
-    }
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
-    }
-    const json = await response.json();
-    return normalizeApiData(json);
-  }, [token, isOffline]);
+      // NEW LOGIC: Differentiate between a failed login and an expired session
+      if (response.status === 401) {
+        if (path === "/api/auth/login") {
+          // If it's a login attempt, extract the backend's specific error message (e.g., "Invalid password")
+          const err = await response
+            .json()
+            .catch(() => ({ message: "Invalid Employee ID or password" }));
+          throw new Error(err.message);
+        } else {
+          // If it's any other route, it truly is an expired session
+          localStorage.removeItem("token");
+          localStorage.removeItem("role");
+          setToken(null);
+          setUser(null);
+          throw new Error("Your session has expired");
+        }
+      }
 
-  const apiDelete = useCallback(async (path: string) => {
-    if (isOffline) {
-      throw new Error('Offline mode active. API calls unavailable.');
-    }
-    const headers: HeadersInit = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    const response = await fetch(path, {
-      method: 'DELETE',
-      headers
-    });
-    if (response.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      setToken(null);
-      setUser(null);
-      throw new Error('Your session has expired');
-    }
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
-    }
-    const json = await response.json();
-return normalizeApiData(json);;
-  }, [token, isOffline]);
+      if (!response.ok) {
+        const err = await response
+          .json()
+          .catch(() => ({ message: "API error" }));
+        throw new Error(err.message || "API error");
+      }
+      const json = await response.json();
+      return normalizeApiData(json);
+    },
+    [token, isOffline],
+  );
+
+  const apiPut = useCallback(
+    async (path: string, body: any) => {
+      if (isOffline) {
+        throw new Error("Offline mode active. API calls unavailable.");
+      }
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      const response = await fetch(path, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(body),
+      });
+      if (response.status === 401) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("role");
+        setToken(null);
+        setUser(null);
+        throw new Error("Your session has expired");
+      }
+      if (!response.ok) {
+        const err = await response
+          .json()
+          .catch(() => ({ message: "API error" }));
+        throw new Error(err.message || "API error");
+      }
+      const json = await response.json();
+      return normalizeApiData(json);
+    },
+    [token, isOffline],
+  );
+
+  const apiDelete = useCallback(
+    async (path: string) => {
+      if (isOffline) {
+        throw new Error("Offline mode active. API calls unavailable.");
+      }
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      const response = await fetch(path, {
+        method: "DELETE",
+        headers,
+      });
+      if (response.status === 401) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("role");
+        setToken(null);
+        setUser(null);
+        throw new Error("Your session has expired");
+      }
+      if (!response.ok) {
+        const err = await response
+          .json()
+          .catch(() => ({ message: "API error" }));
+        throw new Error(err.message || "API error");
+      }
+      const json = await response.json();
+      return normalizeApiData(json);
+    },
+    [token, isOffline],
+  );
 
   // Auth fetch
   const fetchMe = useCallback(async () => {
-  if (!token || isOffline) return;
-  const cached = localStorage.getItem('user');
-  if (cached) {
-    setUser(JSON.parse(cached));
-    return;
-  }
-  setUser(null);
-  setToken(null);
-  localStorage.removeItem('token');
-  localStorage.removeItem('role');
-}, [token, isOffline]);
-
-  useEffect(() => {
-    if (token) {
-      fetchMe();
+    console.log("[fetchMe] starting, token:", token);
+    if (!token || isOffline) return;
+    try {
+      console.log("[fetchMe] fetching profile...");
+      const profileRes = await apiGet("/api/employee/profile");
+      console.log("[fetchMe] profile done:", profileRes);
+      console.log("[fetchMe] fetching balance...");
+      const balanceRes = await apiGet("/api/employee/balance");
+      console.log("[fetchMe] balance done:", balanceRes);
+      const cachedRole = localStorage.getItem("role");
+      const updatedUser = {
+        ...profileRes.data,
+        role: cachedRole,
+        balance: balanceRes.data.balance,
+      };
+      setUser(updatedUser);
+      localStorage.setItem("user", JSON.stringify(updatedUser));
+      console.log("[fetchMe] user set successfully");
+    } catch (e) {
+      console.log("[fetchMe] ERROR:", e);
+      setUser(null);
+      setToken(null);
+      localStorage.removeItem("token");
+      localStorage.removeItem("role");
     }
-  }, [token, fetchMe]);
+  }, [token, isOffline, apiGet]);
 
   // Listen to offline/online events
   useEffect(() => {
@@ -218,76 +284,93 @@ return normalizeApiData(json);;
     const handleOffline = () => {
       setIsOffline(true);
     };
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
     return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
     };
   }, []);
 
   // Fetch notifications
   const fetchNotifications = useCallback(async () => {
     if (!token || isOffline) return;
-    try {
-      const data = await apiGet('/api/employee/notifications');
-      setNotifications(data.notifications || []);
-      setUnreadCount((data.notifications || []).filter((n: any) => !n.read).length);
-    } catch (e) {
-      console.error('Error loading notifications', e);
+
+    // GUARD CONDITION: Do not query employee notifications if the user is a manager or cafe admin
+    const currentRole = user?.role || localStorage.getItem("role");
+    if (currentRole === "manager" || currentRole === "cafe") {
+      return;
     }
-  }, [token, apiGet, isOffline]);
+
+    try {
+      const data = await apiGet("/api/employee/notifications");
+      setNotifications(data.notifications || []);
+      setUnreadCount(
+        (data.notifications || []).filter((n: any) => !n.read).length,
+      );
+    } catch (e) {
+      console.error("Error loading notifications", e);
+    }
+  }, [token, apiGet, isOffline, user]);
 
   useEffect(() => {
-    if (token) {
+    const currentRole = user?.role || localStorage.getItem("role");
+
+    // Only fetch and set up loop if the authenticated user is NOT a manager/cafe admin
+    if (token && currentRole !== "manager" && currentRole !== "cafe") {
       fetchNotifications();
+
       // Setup dynamic poll for live updates
       const interval = setInterval(() => {
         fetchNotifications();
       }, 7000);
+
       return () => clearInterval(interval);
     }
-  }, [token, fetchNotifications]);
+  }, [token, fetchNotifications, user]);
 
   // Theme is handled in ThemeContext
 
-  const setLanguage = (lang: 'en' | 'am') => {
+  const setLanguage = (lang: "en" | "am") => {
     setLangState(lang);
     i18n.changeLanguage(lang);
-    localStorage.setItem('esrom_lang', lang);
+    localStorage.setItem("esrom_lang", lang);
   };
 
-const login = async (employeeId: string, password: string): Promise<any> => {
-  setGlobalLoading(true);
-  try {
-    const res = await apiPost('/api/auth/login', { employee_external_id: employeeId, password });
-    const { token, refresh_token, user: apiUser } = res.data;
+  const login = async (employeeId: string, password: string): Promise<any> => {
+    setGlobalLoading(true);
+    try {
+      const res = await apiPost("/api/auth/login", {
+        employee_external_id: employeeId,
+        password,
+      });
+      const { token, refresh_token, user: apiUser } = res.data;
 
-    let mappedRole = apiUser.roles[0];
-    if (mappedRole === 'company_manager') mappedRole = 'manager';
-    else if (mappedRole === 'cafe_manager') mappedRole = 'cafe';
+      let mappedRole = apiUser.roles[0];
+      if (mappedRole === "company_manager") mappedRole = "manager";
+      else if (mappedRole === "cafe_manager") mappedRole = "cafe";
 
-    const userData = { ...apiUser, role: mappedRole };
+      const userData = { ...apiUser, role: mappedRole };
 
-    localStorage.setItem('token', token);
-    localStorage.setItem('role', mappedRole);
-    localStorage.setItem('user', JSON.stringify(userData));
-    if (refresh_token) localStorage.setItem('refresh_token', refresh_token);
+      localStorage.setItem("token", token);
+      localStorage.setItem("role", mappedRole);
+      localStorage.setItem("user", JSON.stringify(userData));
+      if (refresh_token) localStorage.setItem("refresh_token", refresh_token);
 
-    setToken(token);
-    setUser(userData);
+      setToken(token);
+      setUser(userData);
 
-    setGlobalLoading(false);
-    return res.data;
-  } catch (e) {
-    setGlobalLoading(false);
-    throw e;
-  }
-};
+      setGlobalLoading(false);
+      return res.data;
+    } catch (e) {
+      setGlobalLoading(false);
+      throw e;
+    }
+  };
 
   const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('role');
+    localStorage.removeItem("token");
+    localStorage.removeItem("role");
     setToken(null);
     setUser(null);
     setCart([]);
@@ -299,7 +382,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
       const existing = prev.find((i) => i.item.id === item.id);
       if (existing) {
         return prev.map((i) =>
-          i.item.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
+          i.item.id === item.id ? { ...i, quantity: i.quantity + 1 } : i,
         );
       }
       return [...prev, { item, quantity: 1 }];
@@ -316,7 +399,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
       return;
     }
     setCart((prev) =>
-      prev.map((i) => (i.item.id === itemId ? { ...i, quantity: qty } : i))
+      prev.map((i) => (i.item.id === itemId ? { ...i, quantity: qty } : i)),
     );
   };
 
@@ -332,18 +415,18 @@ const login = async (employeeId: string, password: string): Promise<any> => {
   const markNotificationsAsRead = async () => {
     if (!token || isOffline) return;
     try {
-      await apiPost('/api/notifications/read-all', {});
+      await apiPost("/api/notifications/read-all", {});
       setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
       setUnreadCount(0);
     } catch (e) {
-      console.error('Error marking read:', e);
+      console.error("Error marking read:", e);
     }
   };
 
   const addToOfflineQueue = (order: any) => {
     const queue = [...offlineQueue, order];
     setOfflineQueue(queue);
-    localStorage.setItem('esrom_offline_queue', JSON.stringify(queue));
+    localStorage.setItem("esrom_offline_queue", JSON.stringify(queue));
   };
 
   // Sync waiter offline queue
@@ -351,13 +434,15 @@ const login = async (employeeId: string, password: string): Promise<any> => {
     if (offlineQueue.length === 0 || isOffline) return;
     setGlobalLoading(true);
     try {
-      const response = await apiPost('/api/waiter/sync-orders', { orders: offlineQueue });
+      const response = await apiPost("/api/waiter/sync-orders", {
+        orders: offlineQueue,
+      });
       setOfflineQueue([]);
-      localStorage.setItem('esrom_offline_queue', '[]');
+      localStorage.setItem("esrom_offline_queue", "[]");
       setGlobalLoading(false);
       fetchNotifications();
     } catch (e) {
-      console.error('Sync failed:', e);
+      console.error("Sync failed:", e);
       setGlobalLoading(false);
       throw e;
     }
@@ -409,7 +494,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
         apiGet,
         apiPost,
         apiPut,
-        apiDelete
+        apiDelete,
       }}
     >
       {children}
@@ -420,7 +505,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
 export function useApp() {
   const context = useContext(AppContext);
   if (context === undefined) {
-    throw new Error('useApp must be used within an AppProvider');
+    throw new Error("useApp must be used within an AppProvider");
   }
   return context;
 }

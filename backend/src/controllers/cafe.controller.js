@@ -1,11 +1,13 @@
 import { successResponse } from "../utils/response.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendReportResponse } from "../utils/report.js";
+import { AppError } from "../utils/AppError.js";
 import {
   createMenuItem,
   deleteMenuItem,
   getCafeStatistics,
   getMenuItems,
+  getPublicMenuItems,
   getOperationalReport,
   setMenuItemAvailability,
   updateMenuItem,
@@ -56,8 +58,17 @@ export const removeMenuItem = asyncHandler(async (req, res) => {
 export const markMenuItemAvailability = asyncHandler(async (req, res) => {
   const id = validateMenuItemId(req.params);
   const payload = validateAvailability(req.body);
-  const item = await setMenuItemAvailability(req.user, id, payload.is_available, req.ip);
-  return successResponse(res, item, "Menu item availability updated successfully");
+  const item = await setMenuItemAvailability(
+    req.user,
+    id,
+    payload.is_available,
+    req.ip,
+  );
+  return successResponse(
+    res,
+    item,
+    "Menu item availability updated successfully",
+  );
 });
 
 export const cafeAnalytics = asyncHandler(async (req, res) => {
@@ -75,7 +86,11 @@ export const cafeOperationalReport = asyncHandler(async (req, res) => {
   const report = await getOperationalReport(req.user, params, req.ip);
 
   if (report.format === "json") {
-    return successResponse(res, report.data, "Cafe operational report generated successfully");
+    return successResponse(
+      res,
+      report.data,
+      "Cafe operational report generated successfully",
+    );
   }
 
   return sendReportResponse(res, report);

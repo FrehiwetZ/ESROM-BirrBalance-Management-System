@@ -1,0 +1,25 @@
+{
+  "name": "esrom-birrbalance-management-system",
+  "version": "1.0.0",
+  "description": "ESROM BirrBalance is a complete full-stack employee meal balance and cafeteria management platform designed for organizations that provide meal allowances to employees through partnered cafés.",
+  "main": "index.js",
+  "scripts": {
+    "start:frontend": "cd frontend && npm run dev",
+    "start:backend": "cd backend && npm run dev",
+    "dev": "concurrently \"npm run start:backend\" \"npm run start:frontend\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FrehiwetZ/ESROM-BirrBalance-Management-System.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/FrehiwetZ/ESROM-BirrBalance-Management-System/issues"
+  },
+  "homepage": "https://github.com/FrehiwetZ/ESROM-BirrBalance-Management-System#readme",
+  "devDependencies": {
+    "concurrently": "^10.0.3"
+  }
+}

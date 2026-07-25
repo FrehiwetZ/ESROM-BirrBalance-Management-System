@@ -1,27 +1,34 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useApp } from '../../context/AppContext';
-import { useTranslation } from 'react-i18next';
-import { Eye, EyeOff, ShieldAlert, KeyRound, UserSquare2, Sparkles } from 'lucide-react';
-import { EsromLogo } from '../../components/layout/HeaderSidebar';
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useApp } from "../../context/AppContext";
+import { useTranslation } from "react-i18next";
+import {
+  Eye,
+  EyeOff,
+  ShieldAlert,
+  KeyRound,
+  UserSquare2,
+  Sparkles,
+} from "lucide-react";
+import { EsromLogo } from "../../components/layout/HeaderSidebar";
 
 export default function Login() {
   const { login } = useApp();
   const { t } = useTranslation();
   const navigate = useNavigate();
 
-  const [employeeId, setEmployeeId] = useState('');
-  const [password, setPassword] = useState('');
+  const [employeeId, setEmployeeId] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [loggedOutMsg, setLoggedOutMsg] = useState(false);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
 
   useEffect(() => {
     // Check if on mobile device and banner wasn't dismissed
-    const dismissed = localStorage.getItem('pwa_dismissed') === 'true';
+    const dismissed = localStorage.getItem("pwa_dismissed") === "true";
     // By default, let's also show on smaller viewports in general for preview visibility
     const isMobileOrTablet = window.innerWidth < 1024;
     if (isMobileOrTablet && !dismissed) {
@@ -31,7 +38,7 @@ export default function Login() {
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
-    if (searchParams.get('loggedOut') === 'true') {
+    if (searchParams.get("loggedOut") === "true") {
       setLoggedOutMsg(true);
       window.history.replaceState({}, document.title, window.location.pathname);
     }
@@ -48,33 +55,37 @@ export default function Login() {
     }
   }, [navigate]);
 
- const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (!employeeId.trim() || !password.trim()) {
-    setErrorMsg('Employee ID and password are required.');
-    return;
-  }
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!employeeId.trim() || !password.trim()) {
+      setErrorMsg("Employee ID and password are required.");
+      return;
+    }
 
-  setErrorMsg('');
-  setLoading(true);
+    setErrorMsg("");
+    setLoading(true);
 
-  try {
-    await login(employeeId.toUpperCase(), password);
-    // AppContext already set token, role, and user in localStorage
-    // Just grab the role and navigate
-    const role = localStorage.getItem('role');
-    if (role === "company_manager") navigate("/manager/dashboard");
-    else if (role === "cafe_manager") navigate("/cafe/dashboard");
-    else if (role === "employee") navigate("/employee/dashboard");
-    else if (role === "waiter") navigate("/waiter/panel");
-    else navigate("/login");
-  } catch (err: any) {
-    setErrorMsg("Incorrect Employee ID or password. Please try again.");
-    setPassword('');
-  } finally {
-    setLoading(false);
-  }
-};
+    try {
+      await login(employeeId.toUpperCase(), password);
+      // AppContext already set token, role, and user in localStorage
+      // Just grab the role and navigate
+      const role = localStorage.getItem("role");
+      if (role === "company_manager") navigate("/manager/dashboard");
+      else if (role === "cafe_manager") navigate("/cafe/dashboard");
+      else if (role === "employee") navigate("/employee/dashboard");
+      else if (role === "waiter") navigate("/waiter/panel");
+      else navigate("/login");
+    } catch (err: any) {
+      // 1. Log the EXACT error to your browser console
+      console.error("ACTUAL LOGIN ERROR:", err);
+
+      // 2. Display the real error message to the screen (or fallback to a generic message)
+      setErrorMsg(err.message || "A network or server error occurred.");
+      setPassword("");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen grid grid-cols-1 lg:grid-cols-12 bg-page-bg font-sans">
@@ -83,7 +94,7 @@ export default function Login() {
         {/* Subtle Tech Glowing Circles */}
         <div className="absolute top-[-20%] left-[-20%] w-[80%] h-[80%] rounded-full bg-secondary opacity-20 blur-[120px]"></div>
         <div className="absolute bottom-[-30%] right-[-10%] w-[90%] h-[90%] rounded-full bg-accent opacity-20 blur-[130px]"></div>
-        
+
         {/* Decorative Grid Lines */}
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-35"></div>
 
@@ -102,7 +113,7 @@ export default function Login() {
             Seamless employee meal balances & payments.
           </h1>
           <p className="text-sm text-slate-300 leading-relaxed font-light">
-            {t('auth.tagline')}
+            {t("auth.tagline")}
           </p>
         </div>
 
@@ -138,7 +149,10 @@ export default function Login() {
 
           {/* Logout Success Banner */}
           {loggedOutMsg && (
-            <div id="logout-success-banner" className="flex items-start gap-3 p-4 rounded-xl bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900/60 text-success text-xs font-bold leading-relaxed animate-fadeIn">
+            <div
+              id="logout-success-banner"
+              className="flex items-start gap-3 p-4 rounded-xl bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900/60 text-success text-xs font-bold leading-relaxed animate-fadeIn"
+            >
               <span className="w-2 h-2 rounded-full bg-success mt-1.5 animate-pulse" />
               <span>You have been logged out successfully</span>
             </div>
@@ -148,8 +162,11 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Employee ID */}
             <div className="space-y-2">
-              <label htmlFor="login-employee-id" className="block text-xs font-bold text-dark-text dark:text-slate-200 tracking-wider uppercase">
-                {t('auth.employeeId')}
+              <label
+                htmlFor="login-employee-id"
+                className="block text-xs font-bold text-dark-text dark:text-slate-200 tracking-wider uppercase"
+              >
+                {t("auth.employeeId")}
               </label>
               <div className="relative flex items-center">
                 <UserSquare2 className="w-4 h-4 text-slate-400 absolute left-4" />
@@ -161,7 +178,9 @@ export default function Login() {
                   value={employeeId}
                   onChange={(e) => setEmployeeId(e.target.value)}
                   className={`w-full text-xs pl-11 pr-4 py-3.5 bg-slate-50 dark:bg-slate-900 border ${
-                    errorMsg ? 'border-red-400 focus:border-red-500' : 'border-slate-200 dark:border-slate-800 focus:border-accent'
+                    errorMsg
+                      ? "border-red-400 focus:border-red-500"
+                      : "border-slate-200 dark:border-slate-800 focus:border-accent"
                   } rounded-xl focus:outline-none focus:ring-1 focus:ring-accent dark:text-white uppercase font-semibold`}
                 />
               </div>
@@ -169,20 +188,25 @@ export default function Login() {
 
             {/* Password */}
             <div className="space-y-2">
-              <label htmlFor="login-password" className="block text-xs font-bold text-dark-text dark:text-slate-200 tracking-wider uppercase">
-                {t('auth.password')}
+              <label
+                htmlFor="login-password"
+                className="block text-xs font-bold text-dark-text dark:text-slate-200 tracking-wider uppercase"
+              >
+                {t("auth.password")}
               </label>
               <div className="relative flex items-center">
                 <KeyRound className="w-4 h-4 text-slate-400 absolute left-4" />
                 <input
                   id="login-password"
-                  type={showPassword ? 'text' : 'password'}
+                  type={showPassword ? "text" : "password"}
                   required
                   placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className={`w-full text-xs pl-11 pr-12 py-3.5 bg-slate-50 dark:bg-slate-900 border ${
-                    errorMsg ? 'border-red-400 focus:border-red-500' : 'border-slate-200 dark:border-slate-800 focus:border-accent'
+                    errorMsg
+                      ? "border-red-400 focus:border-red-500"
+                      : "border-slate-200 dark:border-slate-800 focus:border-accent"
                   } rounded-xl focus:outline-none focus:ring-1 focus:ring-accent dark:text-white font-medium`}
                 />
                 <button
@@ -191,7 +215,11 @@ export default function Login() {
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-4 text-slate-400 hover:text-slate-600 focus:outline-none min-h-[44px] min-w-[44px] flex items-center justify-center"
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
                 </button>
               </div>
             </div>
@@ -206,7 +234,7 @@ export default function Login() {
                   onChange={(e) => setRememberMe(e.target.checked)}
                   className="w-4 h-4 rounded border-slate-300 text-secondary focus:ring-secondary cursor-pointer"
                 />
-                <span>{t('auth.rememberMe')}</span>
+                <span>{t("auth.rememberMe")}</span>
               </label>
             </div>
 
@@ -217,7 +245,7 @@ export default function Login() {
               disabled={loading}
               className="login-btn focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent"
             >
-              {loading ? t('common.loading') : t('auth.login')}
+              {loading ? t("common.loading") : t("auth.login")}
             </button>
           </form>
 
@@ -238,15 +266,19 @@ export default function Login() {
               E
             </div>
             <div>
-              <h4 className="text-xs font-bold text-white">ESROM BirrBalance</h4>
-              <p className="text-[10px] text-slate-300">Install app for fast checkout & offline cards</p>
+              <h4 className="text-xs font-bold text-white">
+                ESROM BirrBalance
+              </h4>
+              <p className="text-[10px] text-slate-300">
+                Install app for fast checkout & offline cards
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
                 setShowInstallBanner(false);
-                localStorage.setItem('pwa_dismissed', 'true');
+                localStorage.setItem("pwa_dismissed", "true");
               }}
               className="px-3 py-1.5 text-[10px] font-bold text-slate-400 hover:text-white cursor-pointer"
             >
@@ -255,7 +287,7 @@ export default function Login() {
             <button
               onClick={() => {
                 setShowInstallBanner(false);
-                localStorage.setItem('pwa_dismissed', 'true');
+                localStorage.setItem("pwa_dismissed", "true");
               }}
               className="px-4 py-2 bg-accent-blue hover:bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer"
             >

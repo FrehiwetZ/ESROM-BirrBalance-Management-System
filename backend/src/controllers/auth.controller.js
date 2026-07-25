@@ -1,7 +1,11 @@
 import prisma from "../config/db.js";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
-import { comparePassword, generateToken, hashPassword } from "../services/auth.service.js";
+import {
+  comparePassword,
+  generateToken,
+  hashPassword,
+} from "../services/auth.service.js";
 import {
   generateRefreshToken,
   revokeRefreshToken,
@@ -37,7 +41,10 @@ export const login = asyncHandler(async (req, res) => {
   }
 
   if (!user.is_active) {
-    throw new AppError("Account is disabled. Contact your company manager", 403);
+    throw new AppError(
+      "Account is disabled. Contact your company manager",
+      403,
+    );
   }
 
   const isPasswordValid = await comparePassword(password, user.password_hash);
@@ -140,7 +147,9 @@ export const logout = asyncHandler(async (req, res) => {
 
 export const requestPasswordReset = asyncHandler(async (req, res) => {
   const { employee_external_id } = validatePasswordResetRequest(req.body);
-  const user = await prisma.users.findUnique({ where: { employee_external_id } });
+  const user = await prisma.users.findUnique({
+    where: { employee_external_id },
+  });
 
   if (user?.is_active) {
     const otp = String(crypto.randomInt(100000, 1000000));
@@ -178,12 +187,19 @@ export const requestPasswordReset = asyncHandler(async (req, res) => {
     }
   }
 
-  return successResponse(res, null, "If the employee ID exists, a reset code has been generated");
+  return successResponse(
+    res,
+    null,
+    "If the employee ID exists, a reset code has been generated",
+  );
 });
 
 export const confirmPasswordReset = asyncHandler(async (req, res) => {
-  const { employee_external_id, otp_code, new_password } = validatePasswordResetConfirm(req.body);
-  const user = await prisma.users.findUnique({ where: { employee_external_id } });
+  const { employee_external_id, otp_code, new_password } =
+    validatePasswordResetConfirm(req.body);
+  const user = await prisma.users.findUnique({
+    where: { employee_external_id },
+  });
 
   if (!user?.is_active) {
     throw new AppError("Invalid or expired reset code", 400);
