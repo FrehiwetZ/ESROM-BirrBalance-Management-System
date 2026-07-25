@@ -151,7 +151,7 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose
             {user?.fullName?.charAt(0) || "?"}
           </div>
           <div className="flex-1 overflow-hidden xl:block md:hidden block">
-            <h4 className="text-xs font-bold text-text-primary truncate">{user?.fullname}</h4>
+            <h4 className="text-xs font-bold text-text-primary truncate">{user?.fullName}</h4>
             <p className="text-[10px] text-text-subtle capitalize truncate">{user?.role}</p>
           </div>
         </div>
@@ -462,7 +462,7 @@ export function TopNav({ onMenuClick }: { onMenuClick?: () => void }) {
                   {user?.fullname?.charAt(0) || "?"}
                 </div>
                 <span className="hidden xl:inline text-xs font-bold text-text-primary max-w-[120px] truncate">
-                  {user.fullname}
+                  {user.fullName}
                 </span>
                 <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
               </button>
@@ -472,7 +472,7 @@ export function TopNav({ onMenuClick }: { onMenuClick?: () => void }) {
                 <div id="profile-dropdown" className="absolute right-0 mt-3 w-56 bg-white dark:bg-primary border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl z-50 overflow-hidden">
                   <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/60">
                     <p className="text-xs text-subtle-text">Logged in as</p>
-                    <h4 className="text-sm font-black text-dark-text dark:text-white truncate mt-0.5">{user.fullname}</h4>
+                    <h4 className="text-sm font-black text-dark-text dark:text-white truncate mt-0.5">{user.fullName}</h4>
                     <span className="inline-block mt-1 text-[10px] font-bold text-white bg-secondary px-2 py-0.5 rounded-full capitalize">
                       {user.role}
                     </span>

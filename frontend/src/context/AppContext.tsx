@@ -38,6 +38,7 @@ interface AppContextType {
   refreshData: () => Promise<void>;
   apiGet: (path: string) => Promise<any>;
   apiPost: (path: string, body: any) => Promise<any>;
+  apiPostForm: (path: string, formData: FormData) => Promise<any>;
   apiPut: (path: string, body: any) => Promise<any>;
   apiPatch: (path: string, body: any) => Promise<any>;
   apiDelete: (path: string) => Promise<any>;
@@ -182,15 +183,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return normalizeApiData(json);
   }, [performFetch]);
 
-  const apiPut = useCallback(async (path: string, body: any) => {
-    const res = await performFetch(path, { method: 'PUT', body: JSON.stringify(body) });
-    const json = await res.json();
-    return normalizeApiData(json);
-  }, [performFetch]);
+  const apiPostForm = useCallback(async (path: string, formData: FormData) => {
+  if (isOffline) {
+    throw new Error('Offline mode active. API calls unavailable.');
+  }
 
-  const apiPatch = useCallback(async (path: string, body: any) => {
-    const res = await performFetch(path, { method: 'PATCH', body: JSON.stringify(body) });
-    const json = await res.json();
+  const headers: HeadersInit = {};
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(path, {
+    method: 'POST',
+    headers,
+    body: formData
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ message: 'API error' }));
+    throw new Error(err.message || 'API error');
+  }
+
+  return response.json();
+}, [token, isOffline]);
+
+  const apiPut = useCallback(async (path: string, body: any) => {
+    if (isOffline) {
+      throw new Error('Offline mode active. API calls unavailable.');
+    }
+    const headers: HeadersInit = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(path, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(body)
+    });
+    if (response.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('role');
+      setToken(null);
+      setUser(null);
+      throw new Error('Your session has expired');
+    }
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ message: 'API error' }));
+      throw new Error(err.message || 'API error');
+    }
+    const json = await response.json();
     return normalizeApiData(json);
   }, [performFetch]);
 
@@ -478,6 +520,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
         refreshData,
         apiGet,
         apiPost,
+        apiPostForm,
         apiPut,
         apiPatch,
         apiDelete,
