@@ -140,6 +140,7 @@ export default function EmployeePortal() {
           myOrders={myOrders}
           onReload={loadEmployeeData}
           allocationHistory={allocationHistory}
+          apiPost={apiPost}
         />
       )}
       {activeTab === "orders" && (
@@ -212,7 +213,6 @@ export default function EmployeePortal() {
     </div>
   );
 }
-
 // -----------------------------------------------------------
 // SUB-PAGE 1: EMPLOYEE DASHBOARD
 // -----------------------------------------------------------
@@ -221,13 +221,16 @@ function EmployeeDashboard({
   myOrders,
   onReload,
   allocationHistory,
+  apiPost,
 }: {
   user: any;
   myOrders: any[];
   onReload: () => Promise<void>;
   allocationHistory: any[];
+  apiPost: (path: string, body: any) => Promise<any>;
 }) {
   const { t } = useTranslation();
+  const [qrToken, setQrToken] = useState<string>("");
   const employee = user
     ? {
         ...user,
@@ -282,7 +285,7 @@ function EmployeeDashboard({
     pdf.setTextColor(15, 23, 42);
     pdf.setFontSize(12);
     pdf.setFont("helvetica", "bold");
-    pdf.text(user.fullname, 52.5, 95, { align: "center" });
+    pdf.text(user.fullName, 52.5, 95, { align: "center" });
     pdf.setFontSize(10);
     pdf.setFont("helvetica", "normal");
     pdf.text(user.employeeId, 52.5, 102, { align: "center" });
@@ -323,7 +326,7 @@ function EmployeeDashboard({
     printWindow.document.write(`
       <html>
         <head>
-          <title>ESROM QR Code - ${user.fullname}</title>
+          <title>ESROM QR Code - ${user.fullName}</title>
           <style>
             body {
               display: flex;
@@ -372,7 +375,7 @@ function EmployeeDashboard({
         <body>
           <div class="header">ESROM BirrBalance</div>
           <img src="${imgData}" />
-          <div class="name">${user.fullname}</div>
+          <div class="name">${user.fullName}</div>
           <div class="details">${user.employeeId} · ${user.department}</div>
           <div class="note">Present this card at the cafeteria counter.<br/>Do not share your QR code with others.</div>
         </body>
@@ -383,6 +386,17 @@ function EmployeeDashboard({
     printWindow.print();
     printWindow.close();
   };
+  useEffect(() => {
+    const generateQR = async () => {
+      try {
+        const res = await apiPost("/api/employee/generate-qr", {});
+        setQrToken(res.data.qr_token);
+      } catch (e) {
+        console.error("Failed to generate QR token", e);
+      }
+    };
+    generateQR();
+  }, []);
 
   return (
     <div className="space-y-8 animate-fadeIn">
@@ -491,25 +505,33 @@ function EmployeeDashboard({
 
           {/* QR image block - white background patch so it scans correctly regardless of theme */}
           <div className="p-3 bg-white border border-slate-200 rounded-3xl flex items-center justify-center overflow-hidden shadow-inner">
-            <QRCodeCanvas
-              id="employee-qr-canvas"
-              value={user.encryptedQrToken || ""}
-              size={220}
-              bgColor="#FFFFFF"
-              fgColor="#0A1628"
-              level="H"
-              includeMargin={true}
-              style={{ display: "block" }}
-            />
-            <QRCodeSVG
-              id="employee-qr-svg"
-              value={user.encryptedQrToken || ""}
-              size={220}
-              level="H"
-              bgColor="#FFFFFF"
-              fgColor="#0A1628"
-              style={{ display: "none" }}
-            />
+            {qrToken ? (
+              <>
+                <QRCodeCanvas
+                  id="employee-qr-canvas"
+                  value={qrToken}
+                  size={220}
+                  bgColor="#FFFFFF"
+                  fgColor="#0A1628"
+                  level="H"
+                  includeMargin={true}
+                  style={{ display: "block" }}
+                />
+                <QRCodeSVG
+                  id="employee-qr-svg"
+                  value={qrToken}
+                  size={220}
+                  level="H"
+                  bgColor="#FFFFFF"
+                  fgColor="#0A1628"
+                  style={{ display: "none" }}
+                />
+              </>
+            ) : (
+              <div className="w-[220px] h-[220px] flex items-center justify-center text-slate-400 text-xs font-bold">
+                Generating QR...
+              </div>
+            )}
           </div>
 
           <div className="text-center">
