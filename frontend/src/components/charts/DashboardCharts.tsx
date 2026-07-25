@@ -59,15 +59,15 @@ export function MiniSparklineChart({ data, type = 'line', color = '#3B82F6' }: {
 }
 
 // Grouped Bar Chart: Coupon Allocation vs Redemption Activity (Manager Dashboard)
-export function CouponActivityChart({ period = 'week' }: { period: string }) {
+export function CouponActivityChart({ period = 'week', data: externalData }: { period: string; data?: { name: string; Allocated: number; Redeemed: number }[] }) {
   const { theme } = useTheme();
-  
+
   // Theme-aware variables
   const gridColor = theme === 'dark' ? '#1E3A5F' : '#E2E8F0';
   const tooltipBg = theme === 'dark' ? '#0D1B2E' : '#1E293B';
   const tooltipText = theme === 'dark' ? '#F0F6FF' : '#F8FAFC';
-  
-  const data = [
+
+  const fallbackData = [
     { name: 'Mon', Allocated: 12000, Redeemed: 8500 },
     { name: 'Tue', Allocated: 15000, Redeemed: 11200 },
     { name: 'Wed', Allocated: 14500, Redeemed: 12100 },
@@ -76,6 +76,7 @@ export function CouponActivityChart({ period = 'week' }: { period: string }) {
     { name: 'Sat', Allocated: 8000, Redeemed: 5200 },
     { name: 'Sun', Allocated: 5000, Redeemed: 3100 },
   ];
+  const data = externalData && externalData.length > 0 ? externalData : fallbackData;
 
   return (
     <div className="h-48 md:h-64 w-full">

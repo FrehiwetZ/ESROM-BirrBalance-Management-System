@@ -10,10 +10,12 @@ import WaiterPanel from './pages/waiter/WaiterPanel';
 import { useTranslation } from 'react-i18next';
 import { ShieldAlert, AlertTriangle, Menu, LogOut } from 'lucide-react';
 
-// Wrapper for Protected Routes with Role Checks
+// Wrapper for Protected Routes with Role Checks.
+// Reads auth from context (not localStorage) so it re-renders on login,
+// logout, and session expiry instead of showing stale pages.
 const ProtectedRoute = ({ children, allowedRole }: { children: React.ReactNode; allowedRole?: string }) => {
-  const token = localStorage.getItem("token");
-  const role = normalizeRole(localStorage.getItem("role"));
+  const { token, user } = useApp();
+  const role = normalizeRole(user?.role ?? localStorage.getItem("role"));
   const normalizedAllowedRole = normalizeRole(allowedRole);
 
   if (!token) return <Navigate to="/login" replace />;
@@ -108,8 +110,8 @@ function NotFound() {
 }
 
 export default function App() {
-  const token = localStorage.getItem("token");
-  const role = normalizeRole(localStorage.getItem("role"));
+  const { token, user } = useApp();
+  const role = normalizeRole(user?.role ?? localStorage.getItem("role"));
 
   return (
     <>

@@ -1,12 +1,18 @@
 import { successResponse } from "../utils/response.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendReportResponse } from "../utils/report.js";
+import { AppError } from "../utils/AppError.js";
+import { parsePagination } from "../validators/common.validators.js";
 import {
   createMenuItem,
   deleteMenuItem,
+  getCafeFeedback,
+  getCafeOrders,
   getCafeStatistics,
+  getCafeWaiters,
   getMenuItems,
   getOperationalReport,
+  getPublicMenuItems,
   setMenuItemAvailability,
   updateMenuItem,
 } from "../services/cafe.service.js";
@@ -32,6 +38,21 @@ export const listPublicMenuItems = asyncHandler(async (req, res) => {
   }
   const items = await getPublicMenuItems(cafeId);
   return successResponse(res, items, "Menu items fetched successfully");
+});
+
+export const listCafeOrders = asyncHandler(async (req, res) => {
+  const data = await getCafeOrders(req.user, parsePagination(req.query), req.ip);
+  return successResponse(res, data, "Cafe orders fetched successfully");
+});
+
+export const listCafeWaiters = asyncHandler(async (req, res) => {
+  const waiters = await getCafeWaiters(req.user, req.ip);
+  return successResponse(res, waiters, "Cafe waiters fetched successfully");
+});
+
+export const listCafeFeedback = asyncHandler(async (req, res) => {
+  const data = await getCafeFeedback(req.user, parsePagination(req.query), req.ip);
+  return successResponse(res, data, "Cafe feedback fetched successfully");
 });
 
 export const addMenuItem = asyncHandler(async (req, res) => {

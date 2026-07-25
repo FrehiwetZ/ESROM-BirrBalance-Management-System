@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import i18n from '../i18n/i18n';
 import { useTheme } from './ThemeContext';
 import { User, MenuItem, Order, Feedback, AuditLog, Message, Conversation, WaiterPerformance } from '../types';
@@ -45,8 +45,16 @@ interface AppContextType {
   apiDownload: (path: string) => Promise<{ blob: Blob; contentDisposition?: string | null }>;
 }
 
-// Normalizes field names between the real backend's snake_case API
-// and the camelCase shape the rest of the frontend was built against.
+// Normalizes the backend's snake_case API responses into camelCase — the one
+// casing convention the rest of the frontend uses. Keys in KEY_RENAMES get a
+// semantic rename instead of the mechanical snake→camel conversion.
+const KEY_RENAMES: Record<string, string> = {
+  fullname: 'fullName',
+  employee_external_id: 'employeeId',
+};
+
+const toCamelCase = (key: string) => key.replace(/_+([a-z0-9])/g, (_, ch) => ch.toUpperCase());
+
 function normalizeApiData<T = any>(data: any): T {
   if (Array.isArray(data)) {
     return data.map(normalizeApiData) as any;
@@ -54,22 +62,7 @@ function normalizeApiData<T = any>(data: any): T {
   if (data && typeof data === 'object') {
     const result: any = {};
     for (const key of Object.keys(data)) {
-      const value = normalizeApiData(data[key]);
-      if (key === 'fullname') {
-        result['fullName'] = value;
-      } else if (key === 'employee_external_id') {
-        result['employeeId'] = value;
-      } else if (key === 'is_active') {
-        result['isActive'] = value;
-      } else if (key === 'created_at') {
-        result['createdAt'] = value;
-      } else if (key === 'updated_at') {
-        result['updatedAt'] = value;
-      } else if (key === 'user_id') {
-        result['userId'] = value;
-      } else {
-        result[key] = value;
-      }
+      result[KEY_RENAMES[key] ?? toCamelCase(key)] = normalizeApiData(data[key]);
     }
     return result;
   }
@@ -111,32 +104,42 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   // Synced state triggers
-  // Attempt to refresh token using stored refresh_token
-  const attemptRefresh = useCallback(async () => {
+  // Attempt to refresh token using stored refresh_token. Single-flight:
+  // concurrent 401s share one in-flight refresh instead of racing each other,
+  // which matters because the backend rotates (revokes) the refresh token on use.
+  const refreshPromiseRef = useRef<Promise<boolean> | null>(null);
+  const attemptRefresh = useCallback((): Promise<boolean> => {
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
     const refreshToken = localStorage.getItem('refresh_token');
-    if (!refreshToken || isOffline) return false;
-    try {
-      const res = await fetch('/api/auth/refresh', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: refreshToken })
-      });
-      if (!res.ok) return false;
-      const json = await res.json();
-      const newToken = json.data?.token || json.token;
-      const newRefresh = json.data?.refresh_token || json.refresh_token;
-      if (newToken) {
-        localStorage.setItem('token', newToken);
-        setToken(newToken);
+    if (!refreshToken || isOffline) return Promise.resolve(false);
+    const promise = (async () => {
+      try {
+        const res = await fetch('/api/auth/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken })
+        });
+        if (!res.ok) return false;
+        const json = await res.json();
+        const newToken = json.data?.token || json.token;
+        const newRefresh = json.data?.refresh_token || json.refresh_token;
+        if (newToken) {
+          localStorage.setItem('token', newToken);
+          setToken(newToken);
+        }
+        if (newRefresh) {
+          localStorage.setItem('refresh_token', newRefresh);
+        }
+        return true;
+      } catch (e) {
+        console.error('Refresh token failed', e);
+        return false;
+      } finally {
+        refreshPromiseRef.current = null;
       }
-      if (newRefresh) {
-        localStorage.setItem('refresh_token', newRefresh);
-      }
-      return true;
-    } catch (e) {
-      console.error('Refresh token failed', e);
-      return false;
-    }
+    })();
+    refreshPromiseRef.current = promise;
+    return promise;
   }, [isOffline]);
 
   // Core fetch helper that retries once after refresh
@@ -145,7 +148,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Offline mode active. API calls unavailable.');
     }
     const currentToken = localStorage.getItem('token') || token;
-    const headers: any = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+    const isFormData = opts.body instanceof FormData;
+    const headers: any = {
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+      ...(opts.headers || {})
+    };
     if (currentToken) headers['Authorization'] = `Bearer ${currentToken}`;
     const response = await fetch(path, { ...opts, headers });
     if (response.status === 401) {
@@ -163,11 +170,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem('refresh_token');
       setToken(null);
       setUser(null);
-      throw new Error('Your session has expired');
+      const expired: any = new Error('Your session has expired');
+      expired.status = 401;
+      throw expired;
+    }
+    if (response.status === 403) {
+      // Authenticated but not allowed — do NOT log out, just surface the denial.
+      const err = await response.json().catch(() => ({} as any));
+      const forbidden: any = new Error(err.message || "You don't have permission to perform this action.");
+      forbidden.status = 403;
+      throw forbidden;
     }
     if (!response.ok) {
       const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
+      const error: any = new Error(err.message || 'API error');
+      error.status = response.status;
+      throw error;
     }
     return response;
   }, [token, isOffline, attemptRefresh]);
@@ -183,58 +201,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return normalizeApiData(json);
   }, [performFetch]);
 
+  // Goes through performFetch so multipart uploads get the same 401-refresh
+  // retry and error handling as JSON calls (FormData bodies skip Content-Type).
   const apiPostForm = useCallback(async (path: string, formData: FormData) => {
-  if (isOffline) {
-    throw new Error('Offline mode active. API calls unavailable.');
-  }
-
-  const headers: HeadersInit = {};
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const response = await fetch(path, {
-    method: 'POST',
-    headers,
-    body: formData
-  });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({ message: 'API error' }));
-    throw new Error(err.message || 'API error');
-  }
-
-  return response.json();
-}, [token, isOffline]);
-
-  const apiPut = useCallback(async (path: string, body: any) => {
-    if (isOffline) {
-      throw new Error('Offline mode active. API calls unavailable.');
-    }
-    const headers: HeadersInit = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    const response = await fetch(path, {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify(body)
-    });
-    if (response.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      setToken(null);
-      setUser(null);
-      throw new Error('Your session has expired');
-    }
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ message: 'API error' }));
-      throw new Error(err.message || 'API error');
-    }
-    const json = await response.json();
+    const res = await performFetch(path, { method: 'POST', body: formData });
+    const json = await res.json();
     return normalizeApiData(json);
   }, [performFetch]);
+
+  const apiPatch = useCallback(async (path: string, body: any) => {
+    const res = await performFetch(path, { method: 'PATCH', body: JSON.stringify(body) });
+    const json = await res.json();
+    return normalizeApiData(json);
+  }, [performFetch]);
+
+  // All backend update routes are PATCH; kept as an alias for existing apiPut call sites.
+  const apiPut = apiPatch;
 
   const apiDelete = useCallback(async (path: string) => {
     const res = await performFetch(path, { method: 'DELETE' });
@@ -268,11 +250,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const res = await apiGet('/api/employee/profile');
+      const [res, balanceRes] = await Promise.all([
+        apiGet('/api/employee/profile'),
+        apiGet('/api/employee/balance').catch(() => null),
+      ]);
       const apiUser = normalizeApiData(res.data || res);
 
       const mappedRole = normalizeRole(apiUser.roles?.[0]);
-      const userData = { ...apiUser, role: mappedRole || apiUser.role || 'employee' };
+      const balance = Number(balanceRes?.data?.balance ?? balanceRes?.balance ?? 0);
+      const userData = { ...apiUser, balance, role: mappedRole || apiUser.role || 'employee' };
       setUser(userData);
       localStorage.setItem('user', JSON.stringify(userData));
       if (mappedRole) localStorage.setItem('role', mappedRole);
@@ -375,7 +361,8 @@ const login = async (employeeId: string, password: string): Promise<any> => {
   setGlobalLoading(true);
   try {
     const res = await apiPost('/api/auth/login', { employee_external_id: employeeId, password });
-    const { token, refresh_token, user: apiUser } = res.data;
+    // apiPost responses are camelCased by normalizeApiData (refresh_token -> refreshToken)
+    const { token, refreshToken, user: apiUser } = res.data;
 
     const mappedRole = normalizeRole(apiUser.roles[0]);
     const userData = { ...apiUser, role: mappedRole || apiUser.role || 'employee' };
@@ -383,7 +370,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
     localStorage.setItem('token', token);
     localStorage.setItem('role', mappedRole || userData.role || 'employee');
     localStorage.setItem('user', JSON.stringify(userData));
-    if (refresh_token) localStorage.setItem('refresh_token', refresh_token);
+    if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
 
     setToken(token);
     setUser(userData);
@@ -399,6 +386,8 @@ const login = async (employeeId: string, password: string): Promise<any> => {
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('role');
+    localStorage.removeItem('user');
+    localStorage.removeItem('refresh_token');
     setToken(null);
     setUser(null);
     setCart([]);
@@ -462,7 +451,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
     if (offlineQueue.length === 0 || isOffline) return;
     setGlobalLoading(true);
     try {
-      const response = await apiPost('/api/waiter/sync-orders', { orders: offlineQueue });
+      await apiPost('/api/waiter/sync-orders', { orders: offlineQueue });
       setOfflineQueue([]);
       localStorage.setItem('esrom_offline_queue', '[]');
       setGlobalLoading(false);
