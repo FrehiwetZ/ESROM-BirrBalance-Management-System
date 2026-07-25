@@ -330,7 +330,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     // GUARD CONDITION: Do not query employee notifications if the user is a manager or cafe admin
     const currentRole = user?.role || localStorage.getItem("role");
-    if (currentRole === "manager" || currentRole === "cafe") {
+    if (
+      currentRole === "manager" ||
+      currentRole === "cafe" ||
+      currentRole === "waiter"
+    ) {
       return;
     }
 
@@ -348,11 +352,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const currentRole = user?.role || localStorage.getItem("role");
 
-    // Only fetch and set up loop if the authenticated user is NOT a manager/cafe admin
-    if (token && currentRole !== "manager" && currentRole !== "cafe") {
+    if (
+      token &&
+      currentRole !== "manager" &&
+      currentRole !== "cafe" &&
+      currentRole !== "waiter"
+    ) {
       fetchNotifications();
 
-      // Setup dynamic poll for live updates
       const interval = setInterval(() => {
         fetchNotifications();
       }, 7000);
