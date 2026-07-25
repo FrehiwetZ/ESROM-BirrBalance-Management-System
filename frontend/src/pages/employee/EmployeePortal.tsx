@@ -101,6 +101,12 @@ export default function EmployeePortal() {
   useEffect(() => {
     if (user && user.role === "employee") {
       loadEmployeeData();
+
+      const interval = setInterval(() => {
+        loadEmployeeData();
+      }, 10000); // refetch every 10 seconds
+
+      return () => clearInterval(interval);
     }
   }, [user, location.pathname]);
 

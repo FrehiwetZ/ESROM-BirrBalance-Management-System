@@ -114,7 +114,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [globalLoading, setGlobalLoading] = useState(false);
-  const [activeCafe, setActiveCafe] = useState<any>(null);
+  const [activeCafe, setActiveCafeState] = useState<any>(() => {
+    const cached = localStorage.getItem("activeCafe");
+    return cached ? JSON.parse(cached) : null;
+  });
+
+  const setActiveCafe = (cafe: any) => {
+    setActiveCafeState(cafe);
+    if (cafe) {
+      localStorage.setItem("activeCafe", JSON.stringify(cafe));
+    } else {
+      localStorage.removeItem("activeCafe");
+    }
+  };
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   // Synced state triggers
