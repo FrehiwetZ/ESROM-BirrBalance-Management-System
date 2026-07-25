@@ -240,24 +240,23 @@ export function DailyOrderVolumeChart() {
 }
 
 // Most Frequent Employee Visitors (Horizontal Bar, Cafe Analytics)
-export function FrequentVisitorsChart() {
+export function FrequentVisitorsChart({ data = [] }: { data?: any[] }) {
   const { theme } = useTheme();
   const gridColor = theme === 'dark' ? '#1E3A5F' : '#E2E8F0';
   const tooltipBg = theme === 'dark' ? '#0D1B2E' : '#1E293B';
   const tooltipText = theme === 'dark' ? '#F0F6FF' : '#F8FAFC';
 
-  const data = [
-    { name: 'Samuel Alene', visits: 24 },
-    { name: 'Hirut Kebede', visits: 19 },
-    { name: 'Mekdes Abebe', visits: 18 },
-    { name: 'Dawit Yohannes', visits: 15 },
-    { name: 'Yonas Girmay', visits: 12 },
-  ].reverse();
+  const chartData = data
+  .map((item) => ({
+    name: item.employee_name,
+    visits: item.total_orders,
+  }))
+  .reverse();
 
   return (
     <div className="h-44 md:h-56 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} layout="vertical" margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+        <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={gridColor} />
           <XAxis type="number" stroke="#64748B" fontSize={11} tickLine={false} />
           <YAxis dataKey="name" type="category" stroke="#64748B" fontSize={11} tickLine={false} width={100} />
@@ -276,24 +275,23 @@ export function FrequentVisitorsChart() {
 }
 
 // Most Ordered Items Chart (Horizontal Bar, Cafe Analytics)
-export function MostOrderedItemsChart() {
+export function MostOrderedItemsChart({ data = [] }: { data?: any[] }) {
   const { theme } = useTheme();
   const gridColor = theme === 'dark' ? '#1E3A5F' : '#E2E8F0';
   const tooltipBg = theme === 'dark' ? '#0D1B2E' : '#1E293B';
   const tooltipText = theme === 'dark' ? '#F0F6FF' : '#F8FAFC';
 
-  const data = [
-    { name: 'Doro Wot', count: 185 },
-    { name: 'Beyaynetu', count: 144 },
-    { name: 'Tibs', count: 122 },
-    { name: 'Fresh Juice', count: 98 },
-    { name: 'Coffee', count: 90 },
-  ].reverse();
+  const chartData = data
+  .map((item) => ({
+    name: item.name,
+    count: item.total_quantity,
+  }))
+  .reverse();
 
   return (
     <div className="h-44 md:h-56 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} layout="vertical" margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+        <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={gridColor} />
           <XAxis type="number" stroke="#64748B" fontSize={11} tickLine={false} />
           <YAxis dataKey="name" type="category" stroke="#64748B" fontSize={11} tickLine={false} width={90} />
@@ -312,28 +310,21 @@ export function MostOrderedItemsChart() {
 }
 
 // Peak Order Times by Hour (Area Chart, Cafe Analytics)
-export function PeakOrderTimesChart() {
+export function PeakOrderTimesChart({ data = [] }: { data?: any[] }) {
   const { theme } = useTheme();
   const gridColor = theme === 'dark' ? '#1E3A5F' : '#E2E8F0';
   const tooltipBg = theme === 'dark' ? '#0D1B2E' : '#1E293B';
   const tooltipText = theme === 'dark' ? '#F0F6FF' : '#F8FAFC';
 
-  const data = [
-    { hour: '07 AM', Orders: 10 },
-    { hour: '08 AM', Orders: 35 },
-    { hour: '09 AM', Orders: 15 },
-    { hour: '11 AM', Orders: 45 },
-    { hour: '12 PM', Orders: 165 },
-    { hour: '01 PM', Orders: 195 },
-    { hour: '02 PM', Orders: 80 },
-    { hour: '04 PM', Orders: 25 },
-    { hour: '05 PM', Orders: 30 },
-  ];
+const chartData = data.map((item) => ({
+  hour: item.hour,
+  Orders: item.total_orders,
+}));
 
   return (
     <div className="h-44 md:h-56 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+        <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
           <defs>
             <linearGradient id="colorOrders" x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.4}/>
