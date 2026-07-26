@@ -9,6 +9,8 @@ import {
 import { authenticate, requireRole } from "../middleware/auth.middleware.js";
 import { ROLES } from "../config/constants.js";
 
+console.log("### notification.routes.js loaded - GET routes have no requireRole ###");
+
 const router = express.Router();
 
 router.use(authenticate);

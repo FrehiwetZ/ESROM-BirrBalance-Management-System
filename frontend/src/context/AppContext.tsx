@@ -104,7 +104,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const err = await response.json().catch(() => ({ message: 'API error' }));
       throw new Error(err.message || 'API error');
     }
-    return response.json();
+    const json = await response.json();
+    return normalizeApiData(json);
   }, [token, isOffline]);
 
   const apiPost = useCallback(async (path: string, body: any) => {
@@ -163,6 +164,34 @@ return normalizeApiData(json);;
     return normalizeApiData(json);
   }, [token, isOffline]);
 
+  const apiPatch = useCallback(async (path: string, body: any) => {
+  if (isOffline) {
+    throw new Error('Offline mode active. API calls unavailable.');
+  }
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const response = await fetch(path, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(body)
+  });
+  if (response.status === 401) {
+    localStorage.removeItem('token');
+    localStorage.removeItem('role');
+    setToken(null);
+    setUser(null);
+    throw new Error('Your session has expired');
+  }
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ message: 'API error' }));
+    throw new Error(err.message || 'API error');
+  }
+  const json = await response.json();
+  return normalizeApiData(json);
+}, [token, isOffline]);
+
   const apiDelete = useCallback(async (path: string) => {
     if (isOffline) {
       throw new Error('Offline mode active. API calls unavailable.');
@@ -187,7 +216,7 @@ return normalizeApiData(json);;
       throw new Error(err.message || 'API error');
     }
     const json = await response.json();
-return normalizeApiData(json);;
+    return normalizeApiData(json);;
   }, [token, isOffline]);
 
   // Auth fetch
@@ -230,7 +259,7 @@ return normalizeApiData(json);;
   const fetchNotifications = useCallback(async () => {
     if (!token || isOffline) return;
     try {
-      const data = await apiGet('/api/employee/notifications');
+      const data = await apiGet('/api/notifications');
       setNotifications(data.notifications || []);
       setUnreadCount((data.notifications || []).filter((n: any) => !n.read).length);
     } catch (e) {
@@ -332,7 +361,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
   const markNotificationsAsRead = async () => {
     if (!token || isOffline) return;
     try {
-      await apiPost('/api/notifications/read-all', {});
+      await apiPost('/api/notifications/read-all', {});+
       setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
       setUnreadCount(0);
     } catch (e) {
@@ -409,6 +438,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
         apiGet,
         apiPost,
         apiPut,
+        apiPatch,
         apiDelete
       }}
     >

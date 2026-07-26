@@ -37,7 +37,7 @@ import { exportToExcel, exportToCSV, exportToPDF, exportMonthlyReportToExcel } f
 import { formatETB } from '../../utils/format';
 
 export default function ManagerPortal() {
-  const { user, apiGet, apiPost, apiPut, apiDelete, setGlobalLoading } = useApp();
+  const { user, apiGet, apiPost, apiPut, apiPatch, apiDelete, setGlobalLoading } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
@@ -70,32 +70,37 @@ export default function ManagerPortal() {
   // Reload portal data
   const loadPortalData = async () => {
     try {
-      const emps = await apiGet('/api/employees');
-      setEmployeesList(emps.employees);
-      
-      const depts = await apiGet('/api/departments');
-      setDepartmentsList(depts.departments);
+      const emps = await apiGet('/api/company-manager/employees');
+      const normalizedEmployees = emps.data.items.map((emp: any) => ({
+        ...emp,
+        department: emp.department?.name ?? emp.department ?? '',
+      }));
+      setEmployeesList(normalizedEmployees);
 
-      const ords = await apiGet('/api/orders');
+      const depts = await apiGet('/api/company-manager/departments');
+      setDepartmentsList(depts.data);
+
+      let ords = { orders: [] };
+      try {
+        ords = await apiGet('/api/orders');
+      } catch (e) {
+        console.warn('Orders endpoint not implemented yet');
+      }
       setRecentOrders(ords.orders);
 
       const logs = await apiGet('/api/audit-logs');
       setAuditLogs(logs.auditLogs);
-
-      const feeds = await apiGet('/api/feedback');
+      const feeds = await apiGet('/api/company-manager/feedback');
       setFeedbacks(feeds.feedback);
-
       const chats = await apiGet('/api/messages');
       setConversations(chats.conversations);
       setMessages(chats.messages);
-
       const waiters = await apiGet('/api/waiters');
       setWaitersList(waiters.waiters);
     } catch (e) {
       console.error('Error loading manager data', e);
     }
   };
-
   useEffect(() => {
     if (user && user.role === 'manager') {
       loadPortalData();
@@ -122,6 +127,7 @@ export default function ManagerPortal() {
           onReload={loadPortalData}
           apiPost={apiPost}
           apiPut={apiPut}
+          apiPatch={apiPatch}
           apiDelete={apiDelete}
         />
       )}
@@ -414,6 +420,7 @@ function ManagerEmployeesPage({
   departmentsList,
   onReload,
   apiPost,
+  apiPatch,
   apiPut,
   apiDelete
 }: {
@@ -421,6 +428,7 @@ function ManagerEmployeesPage({
   departmentsList: any[];
   onReload: () => Promise<void>;
   apiPost: (path: string, body: any) => Promise<any>;
+  apiPatch: (path: string, body: any) => Promise<any>;
   apiPut: (path: string, body: any) => Promise<any>;
   apiDelete: (path: string) => Promise<any>;
 }) {
@@ -433,6 +441,7 @@ function ManagerEmployeesPage({
   const [newEmpId, setNewEmpId] = useState('');
   const [newFullName, setNewFullName] = useState('');
   const [newDepartment, setNewDepartment] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newTier, setNewTier] = useState('Tier 1');
@@ -458,22 +467,24 @@ function ManagerEmployeesPage({
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEmpId.trim() || !newFullName.trim() || !newDepartment || !newEmail.trim()) {
+    if (!newEmpId.trim() || !newFullName.trim() || !newDepartment || !newEmail.trim() || !newPassword.trim()) {
       setFormError('All fields with * are required.');
       return;
     }
 
     try {
-      await apiPost('/api/employees', {
-        employeeId: newEmpId,
-        fullName: newFullName,
-        department: newDepartment,
-        phone: newPhone,
+      await apiPost('/api/company-manager/employees', {
+        employee_external_id: newEmpId,
+        fullname: newFullName,
+        department_id: Number(newDepartment),
+        phone_number: newPhone,
         email: newEmail,
-        balanceTier: newTier,
-      });
+        password: newPassword,
+        roles: ['employee'],
+        });
 
       // Clear form
+      setNewPassword('');
       setNewEmpId('');
       setNewFullName('');
       setNewDepartment('');
@@ -490,7 +501,8 @@ function ManagerEmployeesPage({
 
   const handleDeactivate = async (emp: any) => {
     try {
-      await apiPut(`/api/employees/${emp.id}`, { isActive: !emp.isActive });
+      const action = emp.isActive ? 'deactivate' : 'activate';
+      await apiPatch(`/api/company-manager/employees/${emp.id}/${action}`, {});
       onReload();
     } catch (e) {
       console.error(e);
@@ -575,7 +587,7 @@ function ManagerEmployeesPage({
             placeholder="Search by name or ID..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent text-xs dark:text-white"
+            className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent text-xs text-slate-900 dark:text-slate-900"
           />
         </div>
       </div>
@@ -742,7 +754,7 @@ function ManagerEmployeesPage({
                 >
                   <option value="">Select Department</option>
                   {departmentsList.map((d) => (
-                    <option key={d.id} value={d.name}>{d.name}</option>
+                    <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </select>
               </div>
@@ -770,6 +782,18 @@ function ManagerEmployeesPage({
                     onChange={(e) => setNewPhone(e.target.value)}
                     className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent"
                   />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700">Temporary Password *</label>
+                    <input
+                      id="add-emp-password"
+                      type="text"
+                      required
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent"
+                      placeholder="e.g. ChangeMe123!"
+                    />
                 </div>
               </div>
 
@@ -923,7 +947,7 @@ function ManagerDepartmentsPage({
     if (!newDeptName.trim()) return;
 
     try {
-      await apiPost('/api/departments', { name: newDeptName });
+      await apiPost('/api/company-manager/departments', { name: newDeptName });
       setNewDeptName('');
       setShowAddDept(false);
       setErrorMsg('');
@@ -1223,7 +1247,7 @@ function ManagerBalancePage({
                 >
                   <option value="">-- Choose Department --</option>
                   {departmentsList.map((d) => (
-                    <option key={d.id} value={d.name}>{d.name}</option>
+                    <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </select>
               </div>
@@ -1511,7 +1535,7 @@ function ManagerReportsPage({
           >
             <option value="">All Departments</option>
             {departmentsList.map(d => (
-              <option key={d.id} value={d.name}>{d.name}</option>
+              <option key={d.id} value={d.id}>{d.name}</option>
             ))}
           </select>
         </div>

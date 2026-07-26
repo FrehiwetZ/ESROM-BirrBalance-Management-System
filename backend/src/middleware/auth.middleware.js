@@ -50,12 +50,11 @@ export const authenticate = async (req, res, next) => {
 
 export const requireRole = (...allowedRoles) => {
   return (req, res, next) => {
+    console.log("ROLE CHECK:", req.path, { userRoles: req.user?.roles, allowedRoles });
     const hasRole = req.user?.roles?.some((role) => allowedRoles.includes(role));
-
     if (!hasRole) {
       return next(new AppError("You are not authorized to access this resource", 403));
     }
-
     next();
   };
 };

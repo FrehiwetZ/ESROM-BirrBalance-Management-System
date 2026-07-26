@@ -54,8 +54,8 @@ function Layout() {
         {/* Dynamic page container */}
         <main className={`flex-1 overflow-y-auto bg-page no-scrollbar focus:outline-none ${(user?.role === 'employee' || user?.role === 'manager' || user?.role === 'cafe') ? 'pt-16 md:pt-0' : ''}`}>
           <Routes>
-            <Route path="/manager/*" element={<ProtectedRoute allowedRole="company_manager"><ManagerPortal /></ProtectedRoute>} />
-            <Route path="/cafe/*" element={<ProtectedRoute allowedRole="cafe_manager"><CafePortal /></ProtectedRoute>} />
+            <Route path="/manager/*" element={<ProtectedRoute allowedRole="manager"><ManagerPortal /></ProtectedRoute>} />
+            <Route path="/cafe/*" element={<ProtectedRoute allowedRole="cafe"><CafePortal /></ProtectedRoute>} />
             <Route path="/employee/*" element={<ProtectedRoute allowedRole="employee"><EmployeePortal /></ProtectedRoute>} />
             <Route path="/waiter" element={<ProtectedRoute allowedRole="waiter"><WaiterPanel /></ProtectedRoute>} />
             <Route path="/waiter/panel" element={<ProtectedRoute allowedRole="waiter"><WaiterPanel /></ProtectedRoute>} />
@@ -119,8 +119,8 @@ export default function App() {
             token && role ? (
               <Navigate
                 to={
-                  role === 'company_manager' ? '/manager/dashboard' :
-                  role === 'cafe_manager' ? '/cafe/dashboard' :
+                  role === 'manager' ? '/manager/dashboard' :
+                  role === 'cafe' ? '/cafe/dashboard' :
                   role === 'employee' ? '/employee/dashboard' :
                   '/waiter/panel'
                 }
