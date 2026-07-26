@@ -59,6 +59,7 @@ interface AppContextType {
   apiGet: (path: string) => Promise<any>;
   apiPost: (path: string, body: any) => Promise<any>;
   apiPut: (path: string, body: any) => Promise<any>;
+  apiPatch: (path: string, body: any) => Promise<any>;
   apiDelete: (path: string) => Promise<any>;
 }
 
@@ -215,6 +216,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       const response = await fetch(path, {
         method: "PUT",
+        headers,
+        body: JSON.stringify(body),
+      });
+      if (response.status === 401) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("role");
+        setToken(null);
+        setUser(null);
+        throw new Error("Your session has expired");
+      }
+      if (!response.ok) {
+        const err = await response
+          .json()
+          .catch(() => ({ message: "API error" }));
+        throw new Error(err.message || "API error");
+      }
+      const json = await response.json();
+      return normalizeApiData(json);
+    },
+    [token, isOffline],
+  );
+
+  const apiPatch = useCallback(
+    async (path: string, body: any) => {
+      if (isOffline) {
+        throw new Error("Offline mode active. API calls unavailable.");
+      }
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      const response = await fetch(path, {
+        method: "PATCH",
         headers,
         body: JSON.stringify(body),
       });
@@ -533,6 +567,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         apiGet,
         apiPost,
         apiPut,
+        apiPatch,
         apiDelete,
       }}
     >

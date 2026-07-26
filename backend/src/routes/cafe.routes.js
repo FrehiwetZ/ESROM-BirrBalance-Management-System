@@ -4,6 +4,7 @@ import {
   cafeAnalytics,
   cafeOperationalReport,
   editMenuItem,
+  listCafeOrders,
   listMenuItems,
   markMenuItemAvailability,
   removeMenuItem,
@@ -16,6 +17,7 @@ const router = express.Router();
 
 router.use(authenticate, requireRole(ROLES.CAFE_MANAGER));
 
+router.get("/orders", listCafeOrders);
 router.get("/menu", listMenuItems);
 router.post("/menu", uploadMenuImage.single("image"), addMenuItem);
 router.patch("/menu/:id", uploadMenuImage.single("image"), editMenuItem);

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { useApp } from '../../context/AppContext';
-import { useTranslation } from 'react-i18next';
+import React, { useState, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { useApp } from "../../context/AppContext";
+import { useTranslation } from "react-i18next";
 import {
   ClipboardList,
   UtensilsCrossed,
@@ -19,19 +19,31 @@ import {
   Download,
   DollarSign,
   Clock,
-  ThumbsUp
-} from 'lucide-react';
+  ThumbsUp,
+} from "lucide-react";
 import {
   MiniSparklineChart,
   DailyOrderVolumeChart,
   FrequentVisitorsChart,
   MostOrderedItemsChart,
-  PeakOrderTimesChart
-} from '../../components/charts/DashboardCharts';
-import { exportToExcel, exportToCSV, exportToPDF } from '../../utils/exportHelpers';
+  PeakOrderTimesChart,
+} from "../../components/charts/DashboardCharts";
+import {
+  exportToExcel,
+  exportToCSV,
+  exportToPDF,
+} from "../../utils/exportHelpers";
 
 export default function CafePortal() {
-  const { user, apiGet, apiPost, apiPut, apiDelete, setGlobalLoading } = useApp();
+  const {
+    user,
+    apiGet,
+    apiPost,
+    apiPut,
+    apiPatch,
+    apiDelete,
+    setGlobalLoading,
+  } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
@@ -39,12 +51,13 @@ export default function CafePortal() {
   // Determine active tab
   const getActiveTab = () => {
     const path = location.pathname;
-    if (path.includes('menu')) return 'menu';
-    if (path.includes('orders')) return 'orders';
-    if (path.includes('waiters')) return 'waiters';
-    if (path.includes('analytics')) return 'analytics';
-    if (path.includes('reports')) return 'reports';
-    return 'dashboard'; // default
+    if (path.includes("menu")) return "menu";
+    if (path.includes("orders")) return "orders";
+    if (path.includes("waiters")) return "waiters";
+    if (path.includes("analytics")) return "analytics";
+    if (path.includes("reports")) return "reports";
+    if (path.includes("dashboard")) return "dashboard";
+    return "dashboard";
   };
 
   const activeTab = getActiveTab();
@@ -57,40 +70,38 @@ export default function CafePortal() {
 
   const loadCafeData = async () => {
     try {
-      const itemsData = await apiGet('/api/menu');
-      setMenuItems(itemsData.menuItems);
-
-      const ordsData = await apiGet('/api/orders');
-      setOrders(ordsData.orders);
-
-      const waitersData = await apiGet('/api/waiters');
-      setWaiters(waitersData.waiters);
-
-      const feeds = await apiGet('/api/feedback');
-      setFeedbacks(feeds.feedback);
+      const ordsData = await apiGet("/api/cafe/orders");
+      setOrders(ordsData.data);
     } catch (e) {
-      console.error('Error loading cafe portal data', e);
+      console.error("Error loading cafe orders", e);
     }
+
+    // Menu/waiters/feedback management endpoints don't exist yet on the
+    // backend — out of scope for now. Left as empty arrays so the other
+    // tabs don't crash, but they won't show real data until built.
+    setMenuItems([]);
+    setWaiters([]);
+    setFeedbacks([]);
   };
 
   useEffect(() => {
-    if (user && user.role === 'cafe') {
+    if (user && user.role === "cafe") {
       loadCafeData();
     }
   }, [user, location.pathname]);
 
-  if (!user || user.role !== 'cafe') return null;
+  if (!user || user.role !== "cafe") return null;
 
   return (
     <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 md:py-10 space-y-8 font-sans">
-      {activeTab === 'dashboard' && (
+      {activeTab === "dashboard" && (
         <CafeDashboardOverview
           orders={orders}
           waiters={waiters}
           menuItems={menuItems}
         />
       )}
-      {activeTab === 'menu' && (
+      {activeTab === "menu" && (
         <CafeMenuManagement
           menuItems={menuItems}
           onReload={loadCafeData}
@@ -99,28 +110,30 @@ export default function CafePortal() {
           apiDelete={apiDelete}
         />
       )}
-      {activeTab === 'orders' && (
+      {activeTab === "orders" && (
         <CafeOrdersList
           orders={orders}
-          onReload={loadCafeData}
-          apiPut={apiPut}
+          apiPatch={apiPatch}
+          onOrderUpdated={(updatedOrder) => {
+            setOrders((currentOrders) =>
+              currentOrders.map((order) =>
+                order.id === updatedOrder.id
+                  ? { ...order, ...updatedOrder }
+                  : order,
+              ),
+            );
+          }}
         />
       )}
-      {activeTab === 'waiters' && (
+      {activeTab === "waiters" && (
         <CafeWaitersPerformance
           waiters={waiters}
           orders={orders}
           feedbacks={feedbacks}
         />
       )}
-      {activeTab === 'analytics' && (
-        <CafeEmployeeUsageAnalytics />
-      )}
-      {activeTab === 'reports' && (
-        <CafeOperationalReports
-          orders={orders}
-        />
-      )}
+      {activeTab === "analytics" && <CafeEmployeeUsageAnalytics />}
+      {activeTab === "reports" && <CafeOperationalReports orders={orders} />}
     </div>
   );
 }
@@ -131,7 +144,7 @@ export default function CafePortal() {
 function CafeDashboardOverview({
   orders,
   waiters,
-  menuItems
+  menuItems,
 }: {
   orders: any[];
   waiters: any[];
@@ -140,30 +153,36 @@ function CafeDashboardOverview({
   const { t } = useTranslation();
 
   // Metrics
-  const totalOrdersToday = orders.filter(o => o.status !== 'expired').length;
-  const totalRevenue = orders.filter(o => o.status === 'confirmed').reduce((sum, o) => sum + o.amount, 0);
+  const totalOrdersToday = orders.filter((o) => o.status !== "expired").length;
+  const totalRevenue = orders
+    .filter((o) => o.status === "confirmed")
+    .reduce((sum, o) => sum + o.amount, 0);
   const activeWaiters = waiters.length;
-  const mostOrdered = 'Doro Wot (185)';
+  const mostOrdered = "Doro Wot (185)";
 
   const handleExportVolume = () => {
     const volumeData = [
-      { Day: 'Mon', Orders: 120 },
-      { Day: 'Tue', Orders: 145 },
-      { Day: 'Wed', Orders: 132 },
-      { Day: 'Thu', Orders: 185 },
-      { Day: 'Fri', Orders: 210 },
-      { Day: 'Sat', Orders: 75 },
-      { Day: 'Sun', Orders: 40 },
+      { Day: "Mon", Orders: 120 },
+      { Day: "Tue", Orders: 145 },
+      { Day: "Wed", Orders: 132 },
+      { Day: "Thu", Orders: 185 },
+      { Day: "Fri", Orders: 210 },
+      { Day: "Sat", Orders: 75 },
+      { Day: "Sun", Orders: 40 },
     ];
-    exportToExcel(volumeData, 'Cafe_Daily_Order_Volume', 'Orders stats');
+    exportToExcel(volumeData, "Cafe_Daily_Order_Volume", "Orders stats");
   };
 
   return (
     <div className="space-y-8 animate-fadeIn">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-extrabold text-primary tracking-tight">Café Dashboard</h1>
-        <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Live order pipeline, inventory and waiter diagnostics</p>
+        <h1 className="text-2xl font-extrabold text-primary tracking-tight">
+          Café Dashboard
+        </h1>
+        <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">
+          Live order pipeline, inventory and waiter diagnostics
+        </p>
       </div>
 
       {/* Stats row */}
@@ -171,22 +190,38 @@ function CafeDashboardOverview({
         {/* Total Orders */}
         <div className="stat-card-1 rounded-2xl p-6 flex items-center justify-between">
           <div className="space-y-2">
-            <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">Total Orders Today</p>
+            <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">
+              Total Orders Today
+            </p>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-black text-text-primary">{totalOrdersToday}</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-badge-bg text-text-sidebar-active dark:bg-brand-primary/20 dark:text-brand-secondary dark:shadow-[0_0_8px_rgba(59,130,246,0.2)]">+8%</span>
+              <span className="text-3xl font-black text-text-primary">
+                {totalOrdersToday}
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-badge-bg text-text-sidebar-active dark:bg-brand-primary/20 dark:text-brand-secondary dark:shadow-[0_0_8px_rgba(59,130,246,0.2)]">
+                +8%
+              </span>
             </div>
           </div>
-          <MiniSparklineChart data={[15, 18, 20, 22, 28, 31]} type="bar" color="#3B82F6" />
+          <MiniSparklineChart
+            data={[15, 18, 20, 22, 28, 31]}
+            type="bar"
+            color="#3B82F6"
+          />
         </div>
 
         {/* Revenue */}
         <div className="stat-card-2 rounded-2xl p-6 flex items-center justify-between">
           <div className="space-y-2">
-            <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">Total Revenue This Month</p>
+            <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">
+              Total Revenue This Month
+            </p>
             <div className="flex items-baseline gap-1">
-              <span className="text-[10px] font-bold text-text-subtle">ETB</span>
-              <span className="text-2xl font-black text-text-primary">{totalRevenue.toLocaleString()}</span>
+              <span className="text-[10px] font-bold text-text-subtle">
+                ETB
+              </span>
+              <span className="text-2xl font-black text-text-primary">
+                {totalRevenue.toLocaleString()}
+              </span>
             </div>
           </div>
           <MiniSparklineChart data={[30, 34, 40, 48, 52, 60]} color="#8B5CF6" />
@@ -195,8 +230,12 @@ function CafeDashboardOverview({
         {/* Most Ordered Item */}
         <div className="stat-card-3 rounded-2xl p-6 flex items-center justify-between">
           <div className="space-y-2">
-            <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">Most Ordered Item</p>
-            <p className="text-sm font-extrabold text-text-primary">{mostOrdered}</p>
+            <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">
+              Most Ordered Item
+            </p>
+            <p className="text-sm font-extrabold text-text-primary">
+              {mostOrdered}
+            </p>
           </div>
           <div className="p-2 bg-info-bg rounded-2xl">
             <UtensilsCrossed className="w-5 h-5 text-info" />
@@ -206,8 +245,12 @@ function CafeDashboardOverview({
         {/* Active Waiters */}
         <div className="stat-card-4 rounded-2xl p-6 flex items-center justify-between">
           <div className="space-y-2">
-            <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">Active Waiters</p>
-            <p className="text-3xl font-black text-text-primary">{activeWaiters}</p>
+            <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">
+              Active Waiters
+            </p>
+            <p className="text-3xl font-black text-text-primary">
+              {activeWaiters}
+            </p>
           </div>
           <div className="p-2 bg-success-bg rounded-2xl">
             <Users className="w-5 h-5 text-success" />
@@ -220,8 +263,12 @@ function CafeDashboardOverview({
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 lg:col-span-2 space-y-6">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-black text-primary tracking-tight">Daily Order Volume</h3>
-              <p className="text-[10px] text-subtle-text font-medium mt-0.5">Summary of kitchen order counts filled throughout the week</p>
+              <h3 className="text-sm font-black text-primary tracking-tight">
+                Daily Order Volume
+              </h3>
+              <p className="text-[10px] text-subtle-text font-medium mt-0.5">
+                Summary of kitchen order counts filled throughout the week
+              </p>
             </div>
           </div>
 
@@ -242,25 +289,38 @@ function CafeDashboardOverview({
         {/* Live Waiters Performance List */}
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 space-y-6">
           <div>
-            <h3 className="text-sm font-black text-primary tracking-tight">Staff Efficiency Stats</h3>
-            <p className="text-[10px] text-subtle-text font-medium mt-0.5">Average wait and ratings per cashier waiter</p>
+            <h3 className="text-sm font-black text-primary tracking-tight">
+              Staff Efficiency Stats
+            </h3>
+            <p className="text-[10px] text-subtle-text font-medium mt-0.5">
+              Average wait and ratings per cashier waiter
+            </p>
           </div>
 
           <div className="space-y-4">
             {waiters.map((w) => (
-              <div key={w.id} className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-2xl transition-all">
+              <div
+                key={w.id}
+                className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-2xl transition-all"
+              >
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full bg-slate-100 text-primary font-bold flex items-center justify-center uppercase shadow-sm">
                     {w.name.charAt(0)}
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-primary">{w.name}</h4>
-                    <p className="text-[10px] text-slate-400">Rating: {w.rating} ★</p>
+                    <p className="text-[10px] text-slate-400">
+                      Rating: {w.rating} ★
+                    </p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <span className="text-[10px] font-extrabold text-slate-600 block">{w.totalOrders} Orders</span>
-                  <span className="text-[9px] text-slate-400">Avg {w.avgDeliveryTime}</span>
+                  <span className="text-[10px] font-extrabold text-slate-600 block">
+                    {w.totalOrders} Orders
+                  </span>
+                  <span className="text-[9px] text-slate-400">
+                    Avg {w.avgDeliveryTime}
+                  </span>
                 </div>
               </div>
             ))}
@@ -271,8 +331,12 @@ function CafeDashboardOverview({
       {/* Recent orders table */}
       <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 space-y-6">
         <div>
-          <h3 className="text-sm font-black text-primary tracking-tight">Recent Orders</h3>
-          <p className="text-[10px] text-subtle-text font-medium mt-0.5">Live status and waiter assignments for incoming lunch tickets</p>
+          <h3 className="text-sm font-black text-primary tracking-tight">
+            Recent Orders
+          </h3>
+          <p className="text-[10px] text-subtle-text font-medium mt-0.5">
+            Live status and waiter assignments for incoming lunch tickets
+          </p>
         </div>
 
         <div className="table-container relative -mx-6">
@@ -289,18 +353,40 @@ function CafeDashboardOverview({
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
               {orders.slice(0, 5).map((order) => (
-                <tr key={order.id} className="hover:bg-slate-50/40 transition-colors">
-                  <td className="py-3 px-6 font-mono font-bold text-primary">{order.id}</td>
-                  <td className="py-3 px-3 font-bold text-primary">{order.employeeName}</td>
-                  <td className="py-3 px-3 text-slate-500 font-medium max-w-xs truncate">
-                    {order.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', ')}
+                <tr
+                  key={order.id}
+                  className="hover:bg-slate-50/40 transition-colors"
+                >
+                  <td className="py-3 px-6 font-mono font-bold text-primary">
+                    {order.id}
                   </td>
-                  <td className="py-3 px-3 text-right font-extrabold text-primary">ETB {order.amount}</td>
-                  <td className="py-3 px-3 text-center text-slate-600 font-semibold">{order.waiterName}</td>
+                  <td className="py-3 px-3 font-bold text-primary">
+                    {order.employeeName}
+                  </td>
+                  <td className="py-3 px-3 text-slate-500 font-medium max-w-xs truncate">
+                    {(order.order_items || order.items || [])
+                      .map(
+                        (i: any) =>
+                          `${i.item_name_snapshot || i.name} (x${i.quantity})`,
+                      )
+                      .join(", ")}
+                  </td>
+                  <td className="py-3 px-3 text-right font-extrabold text-primary">
+                    ETB {order.amount}
+                  </td>
+                  <td className="py-3 px-3 text-center text-slate-600 font-semibold">
+                    {order.waiterName}
+                  </td>
                   <td className="py-3 px-6 text-center">
-                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                      order.status === 'confirmed' ? 'bg-green-50 text-success' : order.status === 'ready' ? 'bg-blue-50 text-ready' : 'bg-amber-50 text-warning'
-                    }`}>
+                    <span
+                      className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                        order.status === "confirmed"
+                          ? "bg-green-50 text-success"
+                          : order.status === "ready"
+                            ? "bg-blue-50 text-ready"
+                            : "bg-amber-50 text-warning"
+                      }`}
+                    >
                       {order.status}
                     </span>
                   </td>
@@ -322,7 +408,7 @@ function CafeMenuManagement({
   onReload,
   apiPost,
   apiPut,
-  apiDelete
+  apiDelete,
 }: {
   menuItems: any[];
   onReload: () => Promise<void>;
@@ -331,12 +417,14 @@ function CafeMenuManagement({
   apiDelete: (path: string) => Promise<any>;
 }) {
   const [showAddModal, setShowAddModal] = useState(false);
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [price, setPrice] = useState('');
-  const [category, setCategory] = useState<'Food' | 'Beverage' | 'Snack'>('Food');
-  const [photo, setPhoto] = useState('');
-  const [formError, setFormError] = useState('');
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [price, setPrice] = useState("");
+  const [category, setCategory] = useState<"Food" | "Beverage" | "Snack">(
+    "Food",
+  );
+  const [photo, setPhoto] = useState("");
+  const [formError, setFormError] = useState("");
 
   // Delete handlers
   const [deleteItem, setDeleteItem] = useState<any | null>(null);
@@ -344,29 +432,29 @@ function CafeMenuManagement({
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !price || !category) {
-      setFormError('Item name, category, and price are required.');
+      setFormError("Item name, category, and price are required.");
       return;
     }
 
     try {
-      await apiPost('/api/menu', {
+      await apiPost("/api/menu", {
         name,
         description,
         price,
         category,
-        photo
+        photo,
       });
 
-      setName('');
-      setDescription('');
-      setPrice('');
-      setCategory('Food');
-      setPhoto('');
+      setName("");
+      setDescription("");
+      setPrice("");
+      setCategory("Food");
+      setPhoto("");
       setShowAddModal(false);
-      setFormError('');
+      setFormError("");
       onReload();
     } catch (e: any) {
-      setFormError(e.message || 'Error creating menu item');
+      setFormError(e.message || "Error creating menu item");
     }
   };
 
@@ -395,8 +483,12 @@ function CafeMenuManagement({
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-extrabold text-primary tracking-tight">Menu Management</h1>
-          <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Configure cafe meals, pricing, and availability triggers</p>
+          <h1 className="text-2xl font-extrabold text-primary tracking-tight">
+            Menu Management
+          </h1>
+          <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">
+            Configure cafe meals, pricing, and availability triggers
+          </p>
         </div>
         <button
           id="add-menu-trigger-btn"
@@ -411,11 +503,17 @@ function CafeMenuManagement({
       {/* Grid layout */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         {menuItems.map((item) => (
-          <div key={item.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between group">
+          <div
+            key={item.id}
+            className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between group"
+          >
             {/* Meal Image */}
             <div className="h-40 overflow-hidden relative bg-slate-100">
               <img
-                src={item.photo || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=300&auto=format&fit=crop'}
+                src={
+                  item.photo ||
+                  "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=300&auto=format&fit=crop"
+                }
                 alt={item.name}
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
@@ -429,10 +527,16 @@ function CafeMenuManagement({
             <div className="p-5 space-y-3 flex-1 flex flex-col justify-between">
               <div className="space-y-1">
                 <div className="flex justify-between items-start gap-2">
-                  <h3 className="text-sm font-black text-primary line-clamp-1">{item.name}</h3>
-                  <span className="text-xs font-extrabold text-secondary flex-shrink-0">ETB {item.price}</span>
+                  <h3 className="text-sm font-black text-primary line-clamp-1">
+                    {item.name}
+                  </h3>
+                  <span className="text-xs font-extrabold text-secondary flex-shrink-0">
+                    ETB {item.price}
+                  </span>
                 </div>
-                <p className="text-[11px] text-subtle-text line-clamp-2 leading-relaxed">{item.description || 'No description provided.'}</p>
+                <p className="text-[11px] text-subtle-text line-clamp-2 leading-relaxed">
+                  {item.description || "No description provided."}
+                </p>
               </div>
 
               <div className="pt-3 border-t border-slate-50 flex items-center justify-between flex-wrap gap-2">
@@ -442,15 +546,17 @@ function CafeMenuManagement({
                     id={`menu-toggle-avail-${item.id}`}
                     onClick={() => handleToggleAvailable(item)}
                     className={`w-10 h-6 rounded-full p-0.5 transition-colors focus:outline-none ${
-                      item.available ? 'bg-success' : 'bg-slate-200'
+                      item.available ? "bg-success" : "bg-slate-200"
                     }`}
                   >
-                    <div className={`bg-white w-5 h-5 rounded-full shadow-md transform transition-transform ${
-                      item.available ? 'translate-x-4' : 'translate-x-0'
-                    }`} />
+                    <div
+                      className={`bg-white w-5 h-5 rounded-full shadow-md transform transition-transform ${
+                        item.available ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
                   </button>
                   <span className="text-[10px] font-bold text-slate-500 uppercase">
-                    {item.available ? 'Available' : 'Unavailable'}
+                    {item.available ? "Available" : "Unavailable"}
                   </span>
                 </div>
 
@@ -471,7 +577,10 @@ function CafeMenuManagement({
 
       {/* Add Item Modal */}
       {showAddModal && (
-        <div id="add-menu-modal" className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div
+          id="add-menu-modal"
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+        >
           <div className="bg-white rounded-3xl p-6 md:p-8 w-full max-w-md shadow-2xl relative space-y-6 modal-card">
             <button
               onClick={() => setShowAddModal(false)}
@@ -481,12 +590,18 @@ function CafeMenuManagement({
             </button>
 
             <div>
-              <h3 className="text-lg font-black text-primary tracking-tight">Add New Dish</h3>
-              <p className="text-xs text-subtle-text">Create foods or beverages in the cafeteria database</p>
+              <h3 className="text-lg font-black text-primary tracking-tight">
+                Add New Dish
+              </h3>
+              <p className="text-xs text-subtle-text">
+                Create foods or beverages in the cafeteria database
+              </p>
             </div>
 
             {formError && (
-              <p className="text-xs font-bold text-danger bg-red-50 p-3 rounded-xl border border-red-200">{formError}</p>
+              <p className="text-xs font-bold text-danger bg-red-50 p-3 rounded-xl border border-red-200">
+                {formError}
+              </p>
             )}
 
             <form onSubmit={handleAddItem} className="space-y-4 text-xs">
@@ -516,7 +631,9 @@ function CafeMenuManagement({
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="font-bold text-slate-700">Price (ETB) *</label>
+                  <label className="font-bold text-slate-700">
+                    Price (ETB) *
+                  </label>
                   <input
                     id="add-menu-price"
                     type="number"
@@ -577,11 +694,20 @@ function CafeMenuManagement({
 
       {/* Delete confirmation modal */}
       {deleteItem && (
-        <div id="delete-menu-modal" className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div
+          id="delete-menu-modal"
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+        >
           <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl space-y-5">
             <div>
-              <h3 className="text-base font-black text-danger tracking-tight">Permanently Delete Dish?</h3>
-              <p className="text-xs text-subtle-text mt-1">Are you sure you want to delete <strong>{deleteItem.name}</strong> from the active cafeteria menus? This cannot be undone.</p>
+              <h3 className="text-base font-black text-danger tracking-tight">
+                Permanently Delete Dish?
+              </h3>
+              <p className="text-xs text-subtle-text mt-1">
+                Are you sure you want to delete{" "}
+                <strong>{deleteItem.name}</strong> from the active cafeteria
+                menus? This cannot be undone.
+              </p>
             </div>
 
             <div className="flex gap-3 text-xs">
@@ -611,131 +737,202 @@ function CafeMenuManagement({
 // -----------------------------------------------------------
 function CafeOrdersList({
   orders,
-  onReload,
-  apiPut
+  apiPatch,
+  onOrderUpdated,
 }: {
   orders: any[];
-  onReload: () => Promise<void>;
-  apiPut: (path: string, body: any) => Promise<any>;
+  apiPatch: (path: string, body: any) => Promise<any>;
+  onOrderUpdated: (order: any) => void;
 }) {
-  const handleUpdateStatus = async (orderId: string, nextStatus: string) => {
+  const handleUpdateStatus = async (orderId: number, nextStatus: string) => {
     try {
-      await apiPut(`/api/orders/${orderId}/status`, { status: nextStatus });
-      onReload();
-    } catch (e) {
-      console.error(e);
+      const response = await apiPatch(`/api/orders/${orderId}/status`, {
+        status: nextStatus,
+      });
+      if (response?.data) onOrderUpdated(response.data);
+    } catch (e: any) {
+      console.error(e.message || e);
     }
   };
 
+  const employeeName = (o: any) =>
+    o.users_orders_employee_idTousers?.fullName ||
+    o.users_orders_employee_idTousers?.fullname ||
+    "Unknown";
+  const waiterName = (o: any) =>
+    o.users_orders_waiter_idTousers?.fullName ||
+    o.users_orders_waiter_idTousers?.fullname ||
+    "—";
+  const itemsList = (o: any) =>
+    (o.order_items || [])
+      .map((i: any) => `${i.item_name_snapshot} (x${i.quantity})`)
+      .join(", ");
+
   return (
     <div className="space-y-6 animate-fadeIn">
-      {/* Header */}
       <div>
-        <h1 className="text-2xl font-extrabold text-primary tracking-tight">Kitchen Orders</h1>
-        <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Monitor live order statuses and handle prep pipelines</p>
+        <h1 className="text-2xl font-extrabold text-primary tracking-tight">
+          Kitchen Orders
+        </h1>
+        <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">
+          Monitor live order statuses and handle prep pipelines
+        </p>
       </div>
 
-      {/* Pipeline grids */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Pending Stage */}
+        {/* Column 1: Confirmed (just came in, not started yet) */}
         <div className="space-y-4">
           <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-            <span className="text-xs font-black text-primary uppercase tracking-wider">Queue / Pending</span>
+            <span className="text-xs font-black text-primary uppercase tracking-wider">
+              New / Confirmed
+            </span>
             <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold">
-              {orders.filter(o => o.status === 'pending').length}
+              {orders.filter((o) => o.status === "confirmed").length}
             </span>
           </div>
 
           <div className="space-y-3">
-            {orders.filter(o => o.status === 'pending').map(o => (
-              <div key={o.id} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className="font-extrabold text-xs text-primary">{o.employeeName}</h4>
-                    <span className="text-[9px] text-slate-400 font-mono">{o.id}</span>
-                  </div>
-                  <span className="text-[10px] font-black text-secondary">ETB {o.amount}</span>
-                </div>
-                <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-xl space-y-0.5 font-semibold">
-                  {o.items.map((i: any) => (
-                    <p key={i.itemId}>&bull; {i.name} (x{i.quantity})</p>
-                  ))}
-                </div>
-                <button
-                  id={`btn-prep-${o.id}`}
-                  onClick={() => handleUpdateStatus(o.id, 'ready')}
-                  className="w-full text-center py-2 bg-primary hover:bg-secondary text-white font-bold rounded-lg text-[10px] uppercase shadow-sm transition-all"
+            {orders
+              .filter((o) => o.status === "confirmed")
+              .map((o) => (
+                <div
+                  key={o.id}
+                  className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3"
                 >
-                  Mark as Ready / Out for delivery
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Ready Stage */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-            <span className="text-xs font-black text-primary uppercase tracking-wider">Ready for Delivery</span>
-            <span className="px-2 py-0.5 rounded-full bg-blue-50 text-ready text-[10px] font-bold">
-              {orders.filter(o => o.status === 'ready').length}
-            </span>
-          </div>
-
-          <div className="space-y-3">
-            {orders.filter(o => o.status === 'ready').map(o => (
-              <div key={o.id} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className="font-extrabold text-xs text-primary">{o.employeeName}</h4>
-                    <span className="text-[9px] text-slate-400 font-mono">{o.id}</span>
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h4 className="font-extrabold text-xs text-primary">
+                        {employeeName(o)}
+                      </h4>
+                      <span className="text-[9px] text-slate-400 font-mono">
+                        #{o.id}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-black text-secondary">
+                      ETB {Number(o.total_amount).toFixed(2)}
+                    </span>
                   </div>
-                  <span className="text-[10px] font-black text-secondary">ETB {o.amount}</span>
-                </div>
-                <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-xl space-y-0.5 font-semibold">
-                  {o.items.map((i: any) => (
-                    <p key={i.itemId}>&bull; {i.name} (x{i.quantity})</p>
-                  ))}
-                </div>
-                <div className="flex gap-1.5">
+                  <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-xl font-semibold">
+                    {itemsList(o)}
+                  </div>
                   <button
-                    id={`btn-confirm-${o.id}`}
-                    onClick={() => handleUpdateStatus(o.id, 'confirmed')}
-                    className="flex-1 text-center py-2 bg-success text-white font-bold rounded-lg text-[10px] uppercase shadow-sm transition-all"
+                    id={`btn-prep-${o.id}`}
+                    onClick={() => handleUpdateStatus(o.id, "preparing")}
+                    className="w-full text-center py-2 bg-primary hover:bg-secondary text-white font-bold rounded-lg text-[10px] uppercase shadow-sm transition-all"
                   >
-                    Delivered
+                    Start Preparing
                   </button>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
         </div>
 
-        {/* Confirmed / Delivered Stage */}
+        {/* Column 2: Preparing / Ready */}
         <div className="space-y-4">
           <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-            <span className="text-xs font-black text-primary uppercase tracking-wider">Delivered / Confirmed</span>
-            <span className="px-2 py-0.5 rounded-full bg-green-50 text-success text-[10px] font-bold">
-              {orders.filter(o => o.status === 'confirmed').length}
+            <span className="text-xs font-black text-primary uppercase tracking-wider">
+              In Progress
+            </span>
+            <span className="px-2 py-0.5 rounded-full bg-blue-50 text-ready text-[10px] font-bold">
+              {
+                orders.filter(
+                  (o) => o.status === "preparing" || o.status === "ready",
+                ).length
+              }
             </span>
           </div>
 
           <div className="space-y-3">
-            {orders.filter(o => o.status === 'confirmed').slice(0, 4).map(o => (
-              <div key={o.id} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-2 opacity-80">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className="font-extrabold text-xs text-primary">{o.employeeName}</h4>
-                    <span className="text-[9px] text-slate-400 font-mono">{o.id}</span>
+            {orders
+              .filter((o) => o.status === "preparing" || o.status === "ready")
+              .map((o) => (
+                <div
+                  key={o.id}
+                  className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3"
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h4 className="font-extrabold text-xs text-primary">
+                        {employeeName(o)}
+                      </h4>
+                      <span className="text-[9px] text-slate-400 font-mono">
+                        #{o.id}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-black text-secondary">
+                      ETB {Number(o.total_amount).toFixed(2)}
+                    </span>
                   </div>
-                  <span className="text-[10px] font-black text-success">ETB {o.amount}</span>
+                  <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-xl font-semibold">
+                    {itemsList(o)}
+                  </div>
+                  <span
+                    className={`inline-block text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${o.status === "ready" ? "bg-blue-50 text-ready" : "bg-amber-50 text-warning"}`}
+                  >
+                    {o.status}
+                  </span>
+                  {o.status === "preparing" && (
+                    <button
+                      id={`btn-ready-${o.id}`}
+                      onClick={() => handleUpdateStatus(o.id, "ready")}
+                      className="w-full text-center py-2 bg-primary hover:bg-secondary text-white font-bold rounded-lg text-[10px] uppercase shadow-sm transition-all"
+                    >
+                      Mark Ready
+                    </button>
+                  )}
+                  {o.status === "ready" && (
+                    <button
+                      id={`btn-complete-${o.id}`}
+                      onClick={() => handleUpdateStatus(o.id, "completed")}
+                      className="w-full text-center py-2 bg-success text-white font-bold rounded-lg text-[10px] uppercase shadow-sm transition-all"
+                    >
+                      Mark Delivered
+                    </button>
+                  )}
                 </div>
-                <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider flex items-center gap-1">
-                  <Check className="w-3.5 h-3.5 text-success" />
-                  <span>Completed</span>
+              ))}
+          </div>
+        </div>
+
+        {/* Column 3: Completed */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+            <span className="text-xs font-black text-primary uppercase tracking-wider">
+              Delivered
+            </span>
+            <span className="px-2 py-0.5 rounded-full bg-green-50 text-success text-[10px] font-bold">
+              {orders.filter((o) => o.status === "completed").length}
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {orders
+              .filter((o) => o.status === "completed")
+              .slice(0, 8)
+              .map((o) => (
+                <div
+                  key={o.id}
+                  className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-2 opacity-80"
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h4 className="font-extrabold text-xs text-primary">
+                        {employeeName(o)}
+                      </h4>
+                      <span className="text-[9px] text-slate-400 font-mono">
+                        #{o.id}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-black text-success">
+                      ETB {Number(o.total_amount).toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider flex items-center gap-1">
+                    <Check className="w-3.5 h-3.5 text-success" />
+                    <span>Completed &bull; {waiterName(o)}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
         </div>
       </div>
@@ -749,7 +946,7 @@ function CafeOrdersList({
 function CafeWaitersPerformance({
   waiters,
   orders,
-  feedbacks
+  feedbacks,
 }: {
   waiters: any[];
   orders: any[];
@@ -761,8 +958,12 @@ function CafeWaitersPerformance({
     <div className="space-y-6 animate-fadeIn">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-extrabold text-primary tracking-tight">Waiter Efficiency</h1>
-        <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Track average speeds, flags, and service quality</p>
+        <h1 className="text-2xl font-extrabold text-primary tracking-tight">
+          Waiter Efficiency
+        </h1>
+        <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">
+          Track average speeds, flags, and service quality
+        </p>
       </div>
 
       {/* Table */}
@@ -783,16 +984,24 @@ function CafeWaitersPerformance({
               {waiters.map((w) => {
                 const isExpanded = expandedWaiterId === w.id;
                 // Gather waiter orders
-                const waiterOrders = orders.filter(o => o.waiterName === w.name);
+                const waiterOrders = orders.filter(
+                  (o) => o.waiterName === w.name,
+                );
 
                 return (
                   <React.Fragment key={w.id}>
                     <tr
-                      onClick={() => setExpandedWaiterId(isExpanded ? null : w.id)}
+                      onClick={() =>
+                        setExpandedWaiterId(isExpanded ? null : w.id)
+                      }
                       className="hover:bg-slate-50/40 cursor-pointer select-none"
                     >
                       <td className="py-4 px-6 text-center">
-                        {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                        {isExpanded ? (
+                          <ChevronUp className="w-4 h-4 text-slate-400" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4 text-slate-400" />
+                        )}
                       </td>
                       <td className="py-4 px-4 font-bold text-primary flex items-center gap-3">
                         <div className="w-7 h-7 rounded-full bg-slate-100 text-primary font-bold flex items-center justify-center uppercase shadow-sm">
@@ -800,16 +1009,26 @@ function CafeWaitersPerformance({
                         </div>
                         <span>{w.name}</span>
                       </td>
-                      <td className="py-4 px-4 text-center font-bold text-slate-600">{w.totalOrders}</td>
-                      <td className="py-4 px-4 text-center font-medium text-slate-600">{w.avgDeliveryTime}</td>
+                      <td className="py-4 px-4 text-center font-bold text-slate-600">
+                        {w.totalOrders}
+                      </td>
+                      <td className="py-4 px-4 text-center font-medium text-slate-600">
+                        {w.avgDeliveryTime}
+                      </td>
                       <td className="py-4 px-4 text-center">
-                        <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          w.flaggedIssues > 0 ? 'bg-red-50 text-danger' : 'bg-green-50 text-success'
-                        }`}>
+                        <span
+                          className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            w.flaggedIssues > 0
+                              ? "bg-red-50 text-danger"
+                              : "bg-green-50 text-success"
+                          }`}
+                        >
                           {w.flaggedIssues} issues
                         </span>
                       </td>
-                      <td className="py-4 px-6 text-center text-amber-500 font-bold">{w.rating} ★</td>
+                      <td className="py-4 px-6 text-center text-amber-500 font-bold">
+                        {w.rating} ★
+                      </td>
                     </tr>
 
                     {/* Expands details */}
@@ -817,17 +1036,32 @@ function CafeWaitersPerformance({
                       <tr>
                         <td colSpan={6} className="bg-slate-50/30 px-8 py-4">
                           <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-inner space-y-4">
-                            <h4 className="text-[10px] font-bold text-subtle-text uppercase tracking-wider border-b pb-2">Completed Logs by {w.name}</h4>
+                            <h4 className="text-[10px] font-bold text-subtle-text uppercase tracking-wider border-b pb-2">
+                              Completed Logs by {w.name}
+                            </h4>
                             {waiterOrders.length === 0 ? (
-                              <p className="text-xs text-subtle-text">No orders logged in this active session yet.</p>
+                              <p className="text-xs text-subtle-text">
+                                No orders logged in this active session yet.
+                              </p>
                             ) : (
                               <div className="space-y-2 max-h-48 overflow-y-auto no-scrollbar text-xs">
-                                {waiterOrders.map(o => (
-                                  <div key={o.id} className="flex justify-between items-center p-2 hover:bg-slate-50 rounded-lg">
-                                    <span className="font-mono font-bold text-slate-500">{o.id}</span>
-                                    <span className="font-bold text-primary">{o.employeeName}</span>
-                                    <span className="font-bold text-secondary">ETB {o.amount}</span>
-                                    <span className="text-slate-400 font-medium">{new Date(o.date).toLocaleTimeString()}</span>
+                                {waiterOrders.map((o) => (
+                                  <div
+                                    key={o.id}
+                                    className="flex justify-between items-center p-2 hover:bg-slate-50 rounded-lg"
+                                  >
+                                    <span className="font-mono font-bold text-slate-500">
+                                      {o.id}
+                                    </span>
+                                    <span className="font-bold text-primary">
+                                      {o.employeeName}
+                                    </span>
+                                    <span className="font-bold text-secondary">
+                                      ETB {o.amount}
+                                    </span>
+                                    <span className="text-slate-400 font-medium">
+                                      {new Date(o.date).toLocaleTimeString()}
+                                    </span>
                                   </div>
                                 ))}
                               </div>
@@ -851,41 +1085,41 @@ function CafeWaitersPerformance({
 // SUB-PAGE 5: EMPLOYEE USAGE ANALYTICS
 // -----------------------------------------------------------
 function CafeEmployeeUsageAnalytics() {
-  const [dateRange, setDateRange] = useState('2026-06');
+  const [dateRange, setDateRange] = useState("2026-06");
 
   const handleExportVisitors = () => {
     const data = [
-      { name: 'Samuel Alene', visits: 24 },
-      { name: 'Hirut Kebede', visits: 19 },
-      { name: 'Mekdes Abebe', visits: 18 },
-      { name: 'Dawit Yohannes', visits: 15 },
-      { name: 'Yonas Girmay', visits: 12 },
+      { name: "Samuel Alene", visits: 24 },
+      { name: "Hirut Kebede", visits: 19 },
+      { name: "Mekdes Abebe", visits: 18 },
+      { name: "Dawit Yohannes", visits: 15 },
+      { name: "Yonas Girmay", visits: 12 },
     ];
-    exportToExcel(data, 'Cafe_Top_Visitors', 'Visits count');
+    exportToExcel(data, "Cafe_Top_Visitors", "Visits count");
   };
 
   const handleExportItems = () => {
     const data = [
-      { name: 'Doro Wot', count: 185 },
-      { name: 'Beyaynetu', count: 144 },
-      { name: 'Tibs', count: 122 },
-      { name: 'Fresh Juice', count: 98 },
-      { name: 'Coffee', count: 90 },
+      { name: "Doro Wot", count: 185 },
+      { name: "Beyaynetu", count: 144 },
+      { name: "Tibs", count: 122 },
+      { name: "Fresh Juice", count: 98 },
+      { name: "Coffee", count: 90 },
     ];
-    exportToExcel(data, 'Cafe_Top_Items', 'Units count');
+    exportToExcel(data, "Cafe_Top_Items", "Units count");
   };
 
   const handleExportHours = () => {
     const data = [
-      { hour: '07 AM', Orders: 10 },
-      { hour: '08 AM', Orders: 35 },
-      { hour: '09 AM', Orders: 15 },
-      { hour: '11 AM', Orders: 45 },
-      { hour: '12 PM', Orders: 165 },
-      { hour: '01 PM', Orders: 195 },
-      { hour: '02 PM', Orders: 80 },
+      { hour: "07 AM", Orders: 10 },
+      { hour: "08 AM", Orders: 35 },
+      { hour: "09 AM", Orders: 15 },
+      { hour: "11 AM", Orders: 45 },
+      { hour: "12 PM", Orders: 165 },
+      { hour: "01 PM", Orders: 195 },
+      { hour: "02 PM", Orders: 80 },
     ];
-    exportToExcel(data, 'Cafe_Peak_Hours', 'Hours count');
+    exportToExcel(data, "Cafe_Peak_Hours", "Hours count");
   };
 
   return (
@@ -893,8 +1127,12 @@ function CafeEmployeeUsageAnalytics() {
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-extrabold text-primary tracking-tight">Usage Analytics</h1>
-          <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Review dining spikes, top visitors, and top foods</p>
+          <h1 className="text-2xl font-extrabold text-primary tracking-tight">
+            Usage Analytics
+          </h1>
+          <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">
+            Review dining spikes, top visitors, and top foods
+          </p>
         </div>
         <div className="text-xs font-bold text-slate-700">
           <input
@@ -910,7 +1148,9 @@ function CafeEmployeeUsageAnalytics() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Visitor Stats */}
         <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
-          <h3 className="text-xs font-black text-primary uppercase tracking-wider">Most Frequent Employee Visitors</h3>
+          <h3 className="text-xs font-black text-primary uppercase tracking-wider">
+            Most Frequent Employee Visitors
+          </h3>
           <FrequentVisitorsChart />
           <button
             id="export-visitors-btn"
@@ -923,7 +1163,9 @@ function CafeEmployeeUsageAnalytics() {
 
         {/* Food items stats */}
         <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
-          <h3 className="text-xs font-black text-primary uppercase tracking-wider">Most Ordered Menu Items</h3>
+          <h3 className="text-xs font-black text-primary uppercase tracking-wider">
+            Most Ordered Menu Items
+          </h3>
           <MostOrderedItemsChart />
           <button
             id="export-items-btn"
@@ -936,7 +1178,9 @@ function CafeEmployeeUsageAnalytics() {
 
         {/* Peak Hours line */}
         <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4 md:col-span-2">
-          <h3 className="text-xs font-black text-primary uppercase tracking-wider">Peak Dining Times by Hour</h3>
+          <h3 className="text-xs font-black text-primary uppercase tracking-wider">
+            Peak Dining Times by Hour
+          </h3>
           <PeakOrderTimesChart />
           <button
             id="export-hours-btn"
@@ -955,60 +1199,76 @@ function CafeEmployeeUsageAnalytics() {
 // SUB-PAGE 6: OPERATIONAL REPORTS
 // -----------------------------------------------------------
 function CafeOperationalReports({ orders }: { orders: any[] }) {
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
 
-  const reportOrders = orders.filter(o => o.status === 'confirmed');
+  const reportOrders = orders.filter((o) => o.status === "confirmed");
   const totalRevenue = reportOrders.reduce((sum, o) => sum + o.amount, 0);
 
   const handleExportXLSX = () => {
-    const data = reportOrders.map(o => ({
-      'Order ID': o.id,
-      'Employee ID': o.employeeId,
-      'Employee Name': o.employeeName,
+    const data = reportOrders.map((o) => ({
+      "Order ID": o.id,
+      "Employee ID": o.employeeId,
+      "Employee Name": o.employeeName,
       Department: o.department,
-      Items: o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', '),
-      'Amount (ETB)': o.amount,
-      'Waiter Name': o.waiterName,
+      Items: o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(", "),
+      "Amount (ETB)": o.amount,
+      "Waiter Name": o.waiterName,
       Date: new Date(o.date).toLocaleDateString(),
     }));
-    exportToExcel(data, 'Cafe_Operational_Report', 'Sales');
+    exportToExcel(data, "Cafe_Operational_Report", "Sales");
   };
 
   const handleExportCSV = () => {
-    const data = reportOrders.map(o => ({
-      'Order ID': o.id,
-      'Employee ID': o.employeeId,
-      'Employee Name': o.employeeName,
+    const data = reportOrders.map((o) => ({
+      "Order ID": o.id,
+      "Employee ID": o.employeeId,
+      "Employee Name": o.employeeName,
       Department: o.department,
-      Items: o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', '),
-      'Amount (ETB)': o.amount,
-      'Waiter Name': o.waiterName,
+      Items: o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(", "),
+      "Amount (ETB)": o.amount,
+      "Waiter Name": o.waiterName,
       Date: new Date(o.date).toLocaleDateString(),
     }));
-    exportToCSV(data, 'Cafe_Operational_Report');
+    exportToCSV(data, "Cafe_Operational_Report");
   };
 
   const handleExportPDF = () => {
-    const headers = ['Order ID', 'Employee Name', 'Items', 'Amount', 'Waiter', 'Date'];
-    const body = reportOrders.map(o => [
+    const headers = [
+      "Order ID",
+      "Employee Name",
+      "Items",
+      "Amount",
+      "Waiter",
+      "Date",
+    ];
+    const body = reportOrders.map((o) => [
       o.id,
       o.employeeName,
-      o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', '),
+      o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(", "),
       `ETB ${o.amount}`,
       o.waiterName,
       new Date(o.date).toLocaleDateString(),
     ]);
 
-    exportToPDF(headers, body, 'Café Operations Sales Report', 'Cafe_Operational_Sales_Report');
+    exportToPDF(
+      headers,
+      body,
+      "Café Operations Sales Report",
+      "Cafe_Operational_Sales_Report",
+    );
   };
 
   return (
     <div className="space-y-6 animate-fadeIn">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-extrabold text-primary tracking-tight">Operational Reports</h1>
-        <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Audit ledger logs and cafeteria sales summaries</p>
+        <h1 className="text-2xl font-extrabold text-primary tracking-tight">
+          Operational Reports
+        </h1>
+        <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">
+          Audit ledger logs and cafeteria sales summaries
+        </p>
       </div>
 
       {/* Date Pickers */}
@@ -1038,12 +1298,20 @@ function CafeOperationalReports({ orders }: { orders: any[] }) {
       {/* Summary boxes */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
-          <p className="text-[10px] font-bold text-subtle-text uppercase tracking-wider">Total Sales count</p>
-          <p className="text-2xl font-black text-primary mt-1">{reportOrders.length} orders</p>
+          <p className="text-[10px] font-bold text-subtle-text uppercase tracking-wider">
+            Total Sales count
+          </p>
+          <p className="text-2xl font-black text-primary mt-1">
+            {reportOrders.length} orders
+          </p>
         </div>
         <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
-          <p className="text-[10px] font-bold text-subtle-text uppercase tracking-wider">Accumulated Sales Value</p>
-          <p className="text-2xl font-black text-secondary mt-1">ETB {totalRevenue.toLocaleString()}</p>
+          <p className="text-[10px] font-bold text-subtle-text uppercase tracking-wider">
+            Accumulated Sales Value
+          </p>
+          <p className="text-2xl font-black text-secondary mt-1">
+            ETB {totalRevenue.toLocaleString()}
+          </p>
         </div>
       </div>
 
@@ -1090,14 +1358,31 @@ function CafeOperationalReports({ orders }: { orders: any[] }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
-              {reportOrders.map(o => (
-                <tr key={o.id} className="hover:bg-slate-50/40 transition-colors">
-                  <td className="py-3 px-6 font-mono font-bold text-primary">{o.id}</td>
-                  <td className="py-3 px-4 font-bold text-primary">{o.employeeName}</td>
-                  <td className="py-3 px-4 text-slate-500 font-semibold truncate max-w-xs">{o.items.map((i: any) => `${i.name} (x${i.quantity})`).join(', ')}</td>
-                  <td className="py-3 px-4 text-right font-black text-primary">ETB {o.amount}</td>
-                  <td className="py-3 px-4 text-center text-slate-600 font-bold">{o.waiterName}</td>
-                  <td className="py-3 px-6 text-slate-400 font-semibold">{new Date(o.date).toLocaleDateString()}</td>
+              {reportOrders.map((o) => (
+                <tr
+                  key={o.id}
+                  className="hover:bg-slate-50/40 transition-colors"
+                >
+                  <td className="py-3 px-6 font-mono font-bold text-primary">
+                    {o.id}
+                  </td>
+                  <td className="py-3 px-4 font-bold text-primary">
+                    {o.employeeName}
+                  </td>
+                  <td className="py-3 px-4 text-slate-500 font-semibold truncate max-w-xs">
+                    {o.items
+                      .map((i: any) => `${i.name} (x${i.quantity})`)
+                      .join(", ")}
+                  </td>
+                  <td className="py-3 px-4 text-right font-black text-primary">
+                    ETB {o.amount}
+                  </td>
+                  <td className="py-3 px-4 text-center text-slate-600 font-bold">
+                    {o.waiterName}
+                  </td>
+                  <td className="py-3 px-6 text-slate-400 font-semibold">
+                    {new Date(o.date).toLocaleDateString()}
+                  </td>
                 </tr>
               ))}
             </tbody>

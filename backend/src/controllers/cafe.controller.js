@@ -1,3 +1,4 @@
+import prisma from "../config/db.js";
 import { successResponse } from "../utils/response.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendReportResponse } from "../utils/report.js";
@@ -36,6 +37,23 @@ export const listPublicMenuItems = asyncHandler(async (req, res) => {
   return successResponse(res, items, "Menu items fetched successfully");
 });
 
+export const listCafeOrders = asyncHandler(async (req, res) => {
+  if (!req.user.cafeId) {
+    throw new AppError("You are not assigned to a cafe", 403);
+  }
+
+  const orders = await prisma.orders.findMany({
+    where: { cafe_id: req.user.cafeId },
+    include: {
+      order_items: true,
+      users_orders_employee_idTousers: { select: { fullname: true } },
+      users_orders_waiter_idTousers: { select: { fullname: true } },
+    },
+    orderBy: { created_at: "desc" },
+  });
+
+  return successResponse(res, orders, "Cafe orders fetched successfully");
+});
 export const addMenuItem = asyncHandler(async (req, res) => {
   const payload = validateMenuItemCreate(req.body);
   const item = await createMenuItem(req.user, payload, req.file, req.ip);

@@ -48,8 +48,8 @@ export default function Login() {
     const token = localStorage.getItem("token");
     const role = localStorage.getItem("role");
     if (token && role) {
-      if (role === "company_manager") navigate("/manager/dashboard");
-      else if (role === "cafe_manager") navigate("/cafe/dashboard");
+      if (role === "manager") navigate("/manager/dashboard");
+      else if (role === "cafe") navigate("/cafe/dashboard");
       else if (role === "employee") navigate("/employee/dashboard");
       else if (role === "waiter") navigate("/waiter/panel");
     }
@@ -67,11 +67,9 @@ export default function Login() {
 
     try {
       await login(employeeId.toUpperCase(), password);
-      // AppContext already set token, role, and user in localStorage
-      // Just grab the role and navigate
       const role = localStorage.getItem("role");
-      if (role === "company_manager") navigate("/manager/dashboard");
-      else if (role === "cafe_manager") navigate("/cafe/dashboard");
+      if (role === "manager") navigate("/manager/dashboard");
+      else if (role === "cafe") navigate("/cafe/dashboard");
       else if (role === "employee") navigate("/employee/dashboard");
       else if (role === "waiter") navigate("/waiter/panel");
       else navigate("/login");

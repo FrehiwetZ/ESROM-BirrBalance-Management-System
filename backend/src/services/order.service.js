@@ -352,77 +352,88 @@ export const updateOrderStatus = async ({
     );
   }
 
-  return prisma.$transaction(async (tx) => {
-    const order = await loadOrderForUpdate(tx, orderId);
-    assertOrderAccess(actor, order, "status");
-    assertTransition(order.status, status);
+  return prisma.$transaction(
+    async (tx) => {
+      const order = await loadOrderForUpdate(tx, orderId);
+      assertOrderAccess(actor, order, "status");
+      assertTransition(order.status, status);
 
-    const updated = await tx.orders.update({
-      where: { id: orderId },
-      data: {
-        status,
-        completed_at: status === "completed" ? new Date() : order.completed_at,
-      },
-      include: {
-        order_items: true,
-        cafes: { select: { id: true, name: true } },
-      },
-    });
+      const updated = await tx.orders.update({
+        where: { id: orderId },
+        data: {
+          status,
+          completed_at:
+            status === "completed" ? new Date() : order.completed_at,
+        },
+        include: {
+          order_items: true,
+          cafes: { select: { id: true, name: true } },
+        },
+      });
 
-    await notifyOrderStatus(tx, updated, status, actor, ipAddress);
-    await writeAuditLog(
-      {
-        userId: actor.id,
-        action: "order.status.update",
-        entityType: "orders",
-        entityId: orderId,
-        description: `Updated order status from ${order.status} to ${status}`,
-        ipAddress,
-      },
-      tx,
-    );
+      await notifyOrderStatus(tx, updated, status, actor, ipAddress);
+      await writeAuditLog(
+        {
+          userId: actor.id,
+          action: "order.status.update",
+          entityType: "orders",
+          entityId: orderId,
+          description: `Updated order status from ${order.status} to ${status}`,
+          ipAddress,
+        },
+        tx,
+      );
 
-    return updated;
-  });
+      return updated;
+    },
+    {
+      timeout: 15000,
+    },
+  );
 };
 
 export const cancelOrder = async ({ orderId, actor, ipAddress }) => {
-  return prisma.$transaction(async (tx) => {
-    const order = await loadOrderForUpdate(tx, orderId);
-    assertOrderAccess(actor, order, "cancel");
-    assertTransition(order.status, "cancelled");
+  return prisma.$transaction(
+    async (tx) => {
+      const order = await loadOrderForUpdate(tx, orderId);
+      assertOrderAccess(actor, order, "cancel");
+      assertTransition(order.status, "cancelled");
 
-    const restoration = await createBalanceRestoration({
-      tx,
-      order,
-      transactionType: "refund",
-      note: "Cancellation balance restoration",
-    });
+      const restoration = await createBalanceRestoration({
+        tx,
+        order,
+        transactionType: "refund",
+        note: "Cancellation balance restoration",
+      });
 
-    const updated = await tx.orders.update({
-      where: { id: orderId },
-      data: { status: "cancelled" },
-      include: {
-        order_items: true,
-        cafes: { select: { id: true, name: true } },
-      },
-    });
+      const updated = await tx.orders.update({
+        where: { id: orderId },
+        data: { status: "cancelled" },
+        include: {
+          order_items: true,
+          cafes: { select: { id: true, name: true } },
+        },
+      });
 
-    await notifyOrderStatus(tx, updated, "cancelled", actor, ipAddress);
-    await writeAuditLog(
-      {
-        userId: actor.id,
-        action: "order.cancel",
-        entityType: "orders",
-        entityId: orderId,
-        description: `Cancelled order and restored ETB ${Number(order.total_amount).toFixed(2)}`,
-        ipAddress,
-      },
-      tx,
-    );
+      await notifyOrderStatus(tx, updated, "cancelled", actor, ipAddress);
+      await writeAuditLog(
+        {
+          userId: actor.id,
+          action: "order.cancel",
+          entityType: "orders",
+          entityId: orderId,
+          description: `Cancelled order and restored ETB ${Number(order.total_amount).toFixed(2)}`,
+          ipAddress,
+        },
+        tx,
+      );
 
-    return { order: updated, balance_transaction: restoration };
-  });
+      return { order: updated, balance_transaction: restoration };
+    },
+    {
+      timeout: 15000,
+    },
+  );
 };
 
 export const refundOrder = async ({ orderId, actor, ipAddress }) => {
