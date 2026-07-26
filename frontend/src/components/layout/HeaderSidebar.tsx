@@ -459,7 +459,7 @@ export function TopNav({ onMenuClick }: { onMenuClick?: () => void }) {
                 className="flex items-center gap-2 p-1 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 transition-all min-h-[44px] cursor-pointer"
               >
                 <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center font-bold text-white uppercase shadow-inner flex-shrink-0">
-                  {user?.fullname?.charAt(0) || "?"}
+                  {user?.fullName?.charAt(0) || "?"}
                 </div>
                 <span className="hidden xl:inline text-xs font-bold text-text-primary max-w-[120px] truncate">
                   {user.fullName}

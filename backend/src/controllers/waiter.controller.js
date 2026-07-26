@@ -98,43 +98,129 @@ export const scanQR = async (req, res, next) => {
   }
 };
 
-export const createOfflineOrder = async (req, res, next) => {
+export const lookupEmployee = async (req, res, next) => {
   try {
-    const { employee_id, password, items, cafe_id, qr_session_id } = validateOfflineOrder(req.body);
+    const employeeExternalId =
+      typeof req.body.employee_external_id === "string"
+        ? req.body.employee_external_id.trim()
+        : "";
 
-    const employee = await prisma.users.findUnique({
-      where: { id: employee_id },
+    if (!employeeExternalId) {
+      throw new AppError("employee_external_id is required", 400);
+    }
+
+    if (!req.user.cafeId) {
+      throw new AppError("Waiter is not assigned to a cafe", 403);
+    }
+
+    const employee = await prisma.users.findFirst({
+      where: {
+        employee_external_id: employeeExternalId,
+        user_roles: { some: { roles: { name: "employee" } } },
+      },
+      select: {
+        id: true,
+        fullname: true,
+        employee_external_id: true,
+        is_active: true,
+        departments: {
+          select: { name: true },
+        },
+      },
     });
 
     if (!employee || !employee.is_active) {
       throw new AppError("Employee not found or inactive", 404);
     }
 
-    const isPasswordValid = await comparePassword(
-      password,
-      employee.password_hash,
-    );
-
-    if (!isPasswordValid) {
-      throw new AppError("Invalid password", 401);
-    }
-
-    const result = await createOrderWithBalanceDeduction({
-      employeeId: employee_id,
-      cafeId: cafe_id,
-      waiterId: req.user.id,
-      items,
-      orderMethod: "offline_qr",
-      actor: req.user,
-      ipAddress: req.ip,
-      beforeCreate: (tx) => consumeQRSession({
-        sessionId: qr_session_id,
-        employeeId: employee_id,
+    const balance = await getEmployeeBalance(employee.id);
+    const session = await prisma.$transaction(async (tx) => {
+      const qrSession = await createQRSession({
+        employeeId: employee.id,
         waiterId: req.user.id,
-        cafeId: cafe_id,
+        cafeId: req.user.cafeId,
         tx,
-      }),
+      });
+
+      await writeAuditLog(
+        {
+          userId: req.user.id,
+          action: "waiter.employee.lookup",
+          entityType: "users",
+          entityId: employee.id,
+          description: `Looked up employee ${employee.employee_external_id} by external ID`,
+          ipAddress: req.ip,
+        },
+        tx,
+      );
+
+      return qrSession;
     });
+
+    return successResponse(
+      res,
+      {
+        employee: {
+          id: employee.id,
+          fullname: employee.fullname,
+          employee_external_id: employee.employee_external_id,
+          department: employee.departments?.name,
+          balance,
+        },
+        qr_session_id: session.qrSessionId,
+        session_expires_at: session.expiresAt,
+      },
+      "Employee verified successfully",
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+const processOfflineOrder = async (actor, body, ipAddress) => {
+  const { employee_id, password, items, cafe_id, qr_session_id } = validateOfflineOrder({
+    ...body,
+    cafe_id: body?.cafe_id ?? actor.cafeId,
+  });
+
+  const employee = await prisma.users.findUnique({
+    where: { id: employee_id },
+  });
+
+  if (!employee || !employee.is_active) {
+    throw new AppError("Employee not found or inactive", 404);
+  }
+
+  const isPasswordValid = await comparePassword(
+    password,
+    employee.password_hash,
+  );
+
+  if (!isPasswordValid) {
+    throw new AppError("Invalid password", 401);
+  }
+
+  return createOrderWithBalanceDeduction({
+    employeeId: employee_id,
+    cafeId: cafe_id,
+    waiterId: actor.id,
+    items,
+    orderMethod: "offline_qr",
+    actor,
+    ipAddress,
+    beforeCreate: (tx) => consumeQRSession({
+      sessionId: qr_session_id,
+      employeeId: employee_id,
+      waiterId: actor.id,
+      cafeId: cafe_id,
+      tx,
+    }),
+  });
+};
+
+export const createOfflineOrder = async (req, res, next) => {
+  try {
+    const result = await processOfflineOrder(req.user, req.body, req.ip);
 
     return successResponse(
       res,
@@ -146,6 +232,52 @@ export const createOfflineOrder = async (req, res, next) => {
       },
       "Order created successfully",
       201,
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+const MAX_SYNC_ORDERS = 50;
+
+export const syncOfflineOrders = async (req, res, next) => {
+  try {
+    const { orders } = req.body;
+
+    if (!Array.isArray(orders) || orders.length === 0) {
+      throw new AppError("orders must be a non-empty array", 400);
+    }
+
+    if (orders.length > MAX_SYNC_ORDERS) {
+      throw new AppError(`Cannot sync more than ${MAX_SYNC_ORDERS} orders at once`, 400);
+    }
+
+    const results = [];
+    for (const [index, entry] of orders.entries()) {
+      try {
+        const result = await processOfflineOrder(req.user, entry, req.ip);
+        results.push({
+          index,
+          success: true,
+          order_id: result.order.id,
+          order_uuid: result.order.order_uuid,
+          total_amount: result.total_amount,
+        });
+      } catch (error) {
+        results.push({
+          index,
+          success: false,
+          error: error instanceof AppError ? error.message : "Failed to sync order",
+        });
+      }
+    }
+
+    const synced = results.filter((entry) => entry.success).length;
+
+    return successResponse(
+      res,
+      { synced, failed: orders.length - synced, results },
+      "Offline orders processed",
     );
   } catch (error) {
     next(error);

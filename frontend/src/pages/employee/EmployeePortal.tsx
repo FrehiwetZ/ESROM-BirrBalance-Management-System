@@ -35,7 +35,7 @@ import {
 } from 'lucide-react';
 
 export default function EmployeePortal() {
-  const { user, apiGet, apiPost, apiPut, setGlobalLoading, refreshData } = useApp();
+  const { user, apiGet, apiPost, apiPut, setGlobalLoading, refreshData, activeCafe } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
@@ -60,14 +60,28 @@ export default function EmployeePortal() {
 
   const loadEmployeeData = async () => {
     try {
-      const itemsData = await apiGet(`/api/employee/cafes/${activeCafe.id}/menu`);
-      setMenuItems(itemsData.menuItems.filter((i: any) => i.available));
+      if (activeCafe?.id) {
+        const itemsData = await apiGet(`/api/employee/cafes/${activeCafe.id}/menu`);
+        setMenuItems((itemsData.data || []).filter((i: any) => i.is_available));
+      }
 
       const ordersData = await apiGet('/api/employee/orders');
-      setMyOrders(ordersData.orders);
+      setMyOrders((ordersData.data?.items || []).map((o: any) => ({
+        id: o.id,
+        status: o.status,
+        amount: Number(o.total_amount),
+        date: o.created_at,
+        cafeName: o.cafes?.name,
+        items: (o.order_items || []).map((i: any) => ({
+          itemId: i.menu_item_id,
+          name: i.item_name_snapshot || i.menu_items?.name,
+          quantity: i.quantity,
+          price: Number(i.unit_price_snapshot)
+        }))
+      })));
 
-      const profileData = await apiGet('/api/employees/me/profile');
-      setAllocationHistory(profileData.allocations || []);
+      const profileData = await apiGet('/api/employee/profile');
+      setAllocationHistory(profileData.data?.allocations || []);
     } catch (e) {
       console.error('Error loading employee portal data', e);
     }
@@ -612,27 +626,27 @@ function EmployeePlaceOrder({
 
     setIsSubmitting(true);
     try {
-      const formattedItems = cart.map(c => ({
-        itemId: c.item.id,
-        name: c.item.name,
-        quantity: c.quantity,
-        price: Number(c.item.price)
-      }));
-
-      const res = await apiPost('/api/orders', {
-        items: formattedItems,
-        amount: total,
-        location: activeCafe
+      const cafeId = cart[0]?.item.cafe_id;
+      const res = await apiPost('/api/employee/orders', {
+        cafe_id: cafeId,
+        items: cart.map(c => ({
+          menu_item_id: c.item.id,
+          quantity: c.quantity
+        }))
       });
 
       // Clear tray
       setCart([]);
-      
+
       // Real-time balance refetch in AppContext
       await refreshData();
       await onReload();
 
-      setSuccessOrder(res.order);
+      setSuccessOrder({
+        id: res.data?.orderUuid || res.data?.orderId,
+        amount: res.data?.totalAmount ?? total,
+        cafeId
+      });
 
       // Trigger beautiful real-time success toast
       setToast({
@@ -664,10 +678,10 @@ function EmployeePlaceOrder({
     if (!successOrder) return;
 
     try {
-      await apiPost('/api/feedback', {
-        orderId: successOrder.id,
+      await apiPost('/api/employee/feedback', {
+        cafe_id: successOrder.cafeId,
         rating,
-        comment
+        comment: comment.trim() || 'No comment provided'
       });
       setFeedbackSent(true);
       setTimeout(() => {
@@ -1056,9 +1070,9 @@ function EmployeeProfilePage({
     }
 
     try {
-      await apiPut('/api/employees/me/update-password', {
-        oldPassword,
-        newPassword
+      await apiPut('/api/employee/password', {
+        old_password: oldPassword,
+        new_password: newPassword
       });
 
       setPassSuccess('Password updated successfully!');

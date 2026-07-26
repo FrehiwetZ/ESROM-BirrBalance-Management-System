@@ -346,6 +346,146 @@ export const setMenuItemAvailability = async (user, menuItemId, isAvailable, ipA
   return formatMenuItem(item);
 };
 
+export const getCafeOrders = async (user, pagination, ipAddress = null) => {
+  const cafeId = resolveCafeId(user);
+  const where = { cafe_id: cafeId };
+
+  const [orders, total] = await Promise.all([
+    prisma.orders.findMany({
+      where,
+      include: {
+        order_items: true,
+        users_orders_employee_idTousers: {
+          select: { fullname: true, employee_external_id: true },
+        },
+        users_orders_waiter_idTousers: {
+          select: { fullname: true },
+        },
+      },
+      orderBy: { created_at: "desc" },
+      skip: pagination.skip,
+      take: pagination.limit,
+    }),
+    prisma.orders.count({ where }),
+  ]);
+
+  await writeAuditLog({
+    userId: user?.id ?? null,
+    action: "cafe.orders.list",
+    entityType: "orders",
+    description: `Listed orders for cafe ${cafeId}`,
+    ipAddress,
+  });
+
+  return {
+    items: orders.map((order) => ({
+      id: order.id,
+      order_uuid: order.order_uuid,
+      status: order.status,
+      order_method: order.order_method,
+      total_amount: Number(order.total_amount),
+      created_at: order.created_at,
+      completed_at: order.completed_at,
+      employee_name: order.users_orders_employee_idTousers?.fullname ?? null,
+      employee_external_id: order.users_orders_employee_idTousers?.employee_external_id ?? null,
+      waiter_name: order.users_orders_waiter_idTousers?.fullname ?? null,
+      items: order.order_items.map((item) => ({
+        menu_item_id: item.menu_item_id,
+        name: item.item_name_snapshot,
+        quantity: item.quantity,
+        unit_price: Number(item.unit_price_snapshot),
+        subtotal: Number(item.subtotal),
+      })),
+    })),
+    total,
+    page: pagination.page,
+    limit: pagination.limit,
+    total_pages: Math.ceil(total / pagination.limit),
+  };
+};
+
+export const getCafeWaiters = async (user, ipAddress = null) => {
+  const cafeId = resolveCafeId(user);
+
+  const staff = await prisma.cafe_staff.findMany({
+    where: {
+      cafe_id: cafeId,
+      users: {
+        user_roles: { some: { roles: { name: "waiter" } } },
+      },
+    },
+    include: {
+      users: {
+        select: { id: true, fullname: true, employee_external_id: true, is_active: true },
+      },
+    },
+    orderBy: { assigned_at: "asc" },
+  });
+
+  const waiterIds = staff.map((entry) => entry.user_id);
+  const orderCounts = waiterIds.length
+    ? await prisma.orders.groupBy({
+        by: ["waiter_id"],
+        where: { cafe_id: cafeId, waiter_id: { in: waiterIds } },
+        _count: { _all: true },
+      })
+    : [];
+  const countByWaiter = new Map(orderCounts.map((entry) => [entry.waiter_id, entry._count._all]));
+
+  await writeAuditLog({
+    userId: user?.id ?? null,
+    action: "cafe.waiters.list",
+    entityType: "cafe_staff",
+    description: `Listed waiters for cafe ${cafeId}`,
+    ipAddress,
+  });
+
+  return staff.map((entry) => ({
+    id: entry.users.id,
+    fullname: entry.users.fullname,
+    employee_external_id: entry.users.employee_external_id,
+    is_active: entry.users.is_active,
+    assigned_at: entry.assigned_at,
+    total_orders: countByWaiter.get(entry.user_id) ?? 0,
+  }));
+};
+
+export const getCafeFeedback = async (user, pagination, ipAddress = null) => {
+  const cafeId = resolveCafeId(user);
+  const where = { cafe_id: cafeId };
+
+  const [items, total] = await Promise.all([
+    prisma.feedback.findMany({
+      where,
+      include: {
+        users: {
+          select: { id: true, fullname: true, employee_external_id: true },
+        },
+      },
+      orderBy: { created_at: "desc" },
+      skip: pagination.skip,
+      take: pagination.limit,
+    }),
+    prisma.feedback.count({ where }),
+  ]);
+
+  await writeAuditLog({
+    userId: user?.id ?? null,
+    action: "cafe.feedback.list",
+    entityType: "feedback",
+    description: `Listed feedback for cafe ${cafeId}`,
+    ipAddress,
+  });
+
+  return {
+    items,
+    total,
+    page: pagination.page,
+    limit: pagination.limit,
+    total_pages: Math.ceil(total / pagination.limit),
+  };
+};
+
 const buildCafeOrderWhere = (dateRange) => {
   const params = [];
   let whereSql = "o.cafe_id = $1 AND o.status::text = ANY($2)";

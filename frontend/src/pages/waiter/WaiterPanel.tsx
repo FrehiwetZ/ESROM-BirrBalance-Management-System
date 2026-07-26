@@ -47,7 +47,7 @@ export default function WaiterPanel() {
     const loadMenu = async () => {
       try {
         const res = await apiGet('/api/cafe/menu');
-        setMenuItems(res.menuItems.filter((i: any) => i.available));
+        setMenuItems((res.data || []).filter((i: any) => i.is_available));
       } catch (err) {
         console.error(err);
       }
@@ -104,9 +104,9 @@ export default function WaiterPanel() {
     setLookupError('');
 
     try {
-      const res = await apiPost('/api/orders/verify-qr', { qrString });
-      if (res.employee) {
-        setScannedEmployee(res.employee);
+      const res = await apiPost('/api/waiter/scan', { qr_token: qrString });
+      if (res.data?.employee) {
+        setScannedEmployee({ ...res.data.employee, qrSessionId: res.data.qrSessionId });
         setCart([]);
         setStep('order');
       } else {
@@ -123,9 +123,9 @@ export default function WaiterPanel() {
     setLookupError('');
 
     try {
-      const res = await apiPost('/api/waiter/lookup-employee', { employeeId: empId });
-      if (res.employee) {
-        setScannedEmployee(res.employee);
+      const res = await apiPost('/api/waiter/lookup-employee', { employee_external_id: empId });
+      if (res.data?.employee) {
+        setScannedEmployee({ ...res.data.employee, qrSessionId: res.data.qrSessionId });
         setCart([]);
         setStep('order');
       } else {
@@ -180,16 +180,15 @@ export default function WaiterPanel() {
 
     try {
       const formattedItems = cart.map(c => ({
-        itemId: c.item.id,
-        name: c.item.name,
-        quantity: c.quantity,
-        price: c.item.price
+        menu_item_id: c.item.id,
+        quantity: c.quantity
       }));
 
-      const res = await apiPost('/api/waiter/verify-and-debit', {
-        employeeId: scannedEmployee.employeeId,
+      const res = await apiPost('/api/waiter/order', {
+        employee_id: scannedEmployee.id,
+        qr_session_id: scannedEmployee.qrSessionId,
         items: formattedItems,
-        waiterPassword: waiterPassword
+        password: waiterPassword
       });
 
       // Beep audio notifications
@@ -205,7 +204,7 @@ export default function WaiterPanel() {
         console.log('Audio beep blocked or unsupported');
       }
 
-      setFinalTxId(res.order.id);
+      setFinalTxId(res.data?.orderUuid || res.data?.orderId);
       setWaiterPassword('');
       setStep('success');
     } catch (e: any) {
@@ -231,7 +230,7 @@ export default function WaiterPanel() {
       <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-xl font-extrabold text-primary tracking-tight">Waiter Sales Portal</h1>
-          <p className="text-[10px] text-subtle-text font-medium uppercase tracking-wider mt-1">Logged in: <strong>{user.fullname}</strong> &bull; Cashier Waiter Mode</p>
+          <p className="text-[10px] text-subtle-text font-medium uppercase tracking-wider mt-1">Logged in: <strong>{user.fullName}</strong> &bull; Cashier Waiter Mode</p>
         </div>
         {step !== 'scan' && (
           <button
@@ -311,7 +310,7 @@ export default function WaiterPanel() {
 
             <div className="p-4 bg-blue-50/50 rounded-2xl text-xs text-slate-600 leading-relaxed border border-slate-100">
               <h4 className="font-bold text-primary mb-1">Authorization Instructions</h4>
-              <p>Verify that the employee has a valid corporate badge. Once identified, you will select meals and authorize debit with your unique waiter password.</p>
+              <p>Verify that the employee has a valid corporate badge. Once identified, select meals and have the employee enter their account password to authorize the debit.</p>
             </div>
           </div>
 
@@ -431,13 +430,13 @@ export default function WaiterPanel() {
                     <div className="space-y-1.5">
                       <label className="font-bold text-slate-700 flex items-center gap-1">
                         <Lock className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Confirm Waiter Password *</span>
+                        <span>Employee Account Password *</span>
                       </label>
                       <input
                         id="waiter-auth-password"
                         type="password"
                         required
-                        placeholder="Type password to authorize..."
+                        placeholder="Employee types password to authorize..."
                         value={waiterPassword}
                         onChange={(e) => setWaiterPassword(e.target.value)}
                         className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent"

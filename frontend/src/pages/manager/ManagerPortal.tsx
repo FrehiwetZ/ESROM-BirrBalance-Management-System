@@ -709,11 +709,11 @@ function ManagerEmployeesPage({
 
   const handleDeactivate = async (emp: any) => {
     try {
-      // Use correct activate/deactivate endpoints
+      // Backend exposes these as PATCH routes (apiPut sends PATCH)
       if (emp.isActive) {
-        await apiPost(`/api/company-manager/employees/${emp.id}/deactivate`, {});
+        await apiPut(`/api/company-manager/employees/${emp.id}/deactivate`, {});
       } else {
-        await apiPost(`/api/company-manager/employees/${emp.id}/activate`, {});
+        await apiPut(`/api/company-manager/employees/${emp.id}/activate`, {});
       }
       onReload();
     } catch (e) {
@@ -1623,6 +1623,7 @@ function ManagerReportsPage({
   waitersList: any[];
 }) {
   const { t } = useTranslation();
+  const { apiDownload, setGlobalLoading } = useApp();
   const [selectedMonth, setSelectedMonth] = useState('2026-06');
   const [selectedDept, setSelectedDept] = useState('');
   const [selectedCafe, setSelectedCafe] = useState('');
@@ -2159,9 +2160,12 @@ function ManagerMessagesPage({
     setLocalMessages(prev => [...prev, newMsg]);
 
     try {
-      await apiPost('/api/messages', {
-        text: textToSend,
-        conversationId: activeChat.id
+      // Messages are delivered as in-app notifications to the employee
+      await apiPost('/api/notifications', {
+        user_id: activeChat.userId,
+        title: 'Message from manager',
+        message: textToSend,
+        type: 'feedback'
       });
 
       if (activeChat.isNewEmptyChat) {
@@ -2217,6 +2221,7 @@ function ManagerMessagesPage({
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         unreadCount: 0,
         employeeId: targetId,
+        userId: emp.id,
         isNewEmptyChat: true,
       };
       setLocalConversations(prev => [newConv, ...prev]);

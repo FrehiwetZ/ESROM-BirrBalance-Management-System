@@ -59,16 +59,42 @@ export default function CafePortal() {
   const loadCafeData = async () => {
     try {
       const itemsData = await apiGet('/api/cafe/menu');
-      setMenuItems(itemsData.data);
+      setMenuItems(itemsData.data || []);
 
-      const ordsData = await apiGet('/api/orders');
-      setOrders(ordsData.orders);
+      const ordsData = await apiGet('/api/cafe/orders?limit=100');
+      setOrders((ordsData.data?.items || []).map((o: any) => ({
+        id: o.id,
+        status: o.status,
+        amount: o.total_amount,
+        employeeName: o.employee_name,
+        waiterName: o.waiter_name,
+        date: o.created_at,
+        items: (o.items || []).map((i: any) => ({
+          itemId: i.menu_item_id,
+          name: i.name,
+          quantity: i.quantity,
+          price: i.unit_price
+        }))
+      })));
 
-      const waitersData = await apiGet('/api/waiters');
-      setWaiters(waitersData.waiters);
+      const waitersData = await apiGet('/api/cafe/waiters');
+      setWaiters((waitersData.data || []).map((w: any) => ({
+        id: w.id,
+        name: w.fullname,
+        totalOrders: w.total_orders,
+        avgDeliveryTime: '—',
+        flaggedIssues: 0,
+        rating: '—'
+      })));
 
-      const feeds = await apiGet('/api/feedback');
-      setFeedbacks(feeds.feedback);
+      const feeds = await apiGet('/api/cafe/feedback?limit=100');
+      setFeedbacks((feeds.data?.items || []).map((f: any) => ({
+        id: f.id,
+        rating: f.rating,
+        comment: f.comment,
+        employeeName: f.users?.fullname,
+        date: f.created_at
+      })));
     } catch (e) {
       console.error('Error loading cafe portal data', e);
     }
@@ -1025,6 +1051,7 @@ function CafeEmployeeUsageAnalytics() {
 // SUB-PAGE 6: OPERATIONAL REPORTS
 // -----------------------------------------------------------
 function CafeOperationalReports({ orders }: { orders: any[] }) {
+  const { apiDownload, setGlobalLoading } = useApp();
   const [reportMonth, setReportMonth] = useState(() => new Date().toISOString().slice(0, 7));
 
   const reportOrders = orders
