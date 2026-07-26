@@ -57,7 +57,8 @@ function normalizeApiData<T = any>(data: any): T {
       } else if (key === 'employee_external_id') {
         result['employeeId'] = value;
       } else {
-        result[key] = value;
+        const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+        result[camelKey] = value;
       }
     }
     return result;

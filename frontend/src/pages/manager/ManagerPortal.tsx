@@ -517,7 +517,7 @@ function ManagerEmployeesPage({
     }
 
     try {
-      await apiDelete(`/api/employees/${deleteEmp.id}`);
+       await apiDelete(`/api/company-manager/employees/${deleteEmp.id}`);
       setDeleteEmp(null);
       setDeleteTypedConfirm('');
       onReload();
@@ -1138,6 +1138,10 @@ function ManagerBalancePage({
   const [option, setOption] = useState<'department' | 'employee'>('department');
   const [targetId, setTargetId] = useState('');
   const [amount, setAmount] = useState('');
+  const [month, setMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [successAllocMsg, setSuccessAllocMsg] = useState('');
 
@@ -1163,30 +1167,54 @@ function ManagerBalancePage({
     return count * Number(amount || 0);
   };
 
-  const handleAllocate = async () => {
-    if (!amount || !targetId) return;
+ const handleAllocate = async () => {
+  if (!amount || !targetId || !month) return;
 
-    try {
-      const res = await apiPost('/api/balance/allocate', {
-        option,
-        targetId,
-        amount: Number(amount)
+  try {
+    let successCount = 0;
+    let failCount = 0;
+
+    if (option === 'employee') {
+      await apiPost('/api/company-manager/balances/allocations', {
+        user_id: Number(targetId),
+        amount: Number(amount),
+        month,
       });
-
-      setSuccessAllocMsg(`Allocated ${formatETB(Number(amount))} successfully to ${res.affectedCount} employees!`);
-      setShowWarningModal(false);
-      setAmount('');
-      setTargetId('');
-      setSearchEmp('');
-      onReload();
-
-      setTimeout(() => {
-        setSuccessAllocMsg('');
-      }, 5000);
-    } catch (e: any) {
-      alert(e.message || 'Error allocating balance');
+      successCount = 1;
+    } else {
+      // Department: backend only supports one employee per call, so loop
+      const targets = employeesList.filter((e) => e.department === targetId && e.isActive);
+      for (const emp of targets) {
+        try {
+          await apiPost('/api/company-manager/balances/allocations', {
+            user_id: Number(emp.id),
+            amount: Number(amount),
+            month,
+          });
+          successCount++;
+        } catch (e) {
+          failCount++;
+        }
+      }
     }
-  };
+
+    if (failCount > 0) {
+      setSuccessAllocMsg(`Allocated to ${successCount} employees, ${failCount} failed (likely already allocated for this month).`);
+    } else {
+      setSuccessAllocMsg(`Allocated ${formatETB(Number(amount))} successfully to ${successCount} employee(s)!`);
+    }
+    setShowWarningModal(false);
+    setAmount('');
+    setTargetId('');
+    setSearchEmp('');
+    onReload();
+    setTimeout(() => {
+      setSuccessAllocMsg('');
+    }, 5000);
+  } catch (e: any) {
+    alert(e.message || 'Error allocating balance');
+  }
+};
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -1297,6 +1325,17 @@ function ManagerBalancePage({
                 placeholder="e.g. 1500"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent font-bold"
+              />
+            </div>
+             {/* Month */}
+            <div className="space-y-1.5">
+              <label className="font-bold text-slate-700">Allocation Month</label>
+              <input
+                id="alloc-month-input"
+                type="month"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
                 className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent font-bold"
               />
             </div>
