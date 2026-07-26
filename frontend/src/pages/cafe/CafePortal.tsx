@@ -744,14 +744,31 @@ function CafeOrdersList({
   apiPatch: (path: string, body: any) => Promise<any>;
   onOrderUpdated: (order: any) => void;
 }) {
+  const [pendingOrderIds, setPendingOrderIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+
   const handleUpdateStatus = async (orderId: number, nextStatus: string) => {
+    const currentOrder = orders.find((order) => order.id === orderId);
+    if (!currentOrder || pendingOrderIds.has(orderId)) return;
+
+    setPendingOrderIds((ids) => new Set(ids).add(orderId));
+    onOrderUpdated({ ...currentOrder, status: nextStatus });
+
     try {
       const response = await apiPatch(`/api/orders/${orderId}/status`, {
         status: nextStatus,
       });
       if (response?.data) onOrderUpdated(response.data);
     } catch (e: any) {
+      onOrderUpdated(currentOrder);
       console.error(e.message || e);
+    } finally {
+      setPendingOrderIds((ids) => {
+        const nextIds = new Set(ids);
+        nextIds.delete(orderId);
+        return nextIds;
+      });
     }
   };
 
@@ -818,9 +835,10 @@ function CafeOrdersList({
                   <button
                     id={`btn-prep-${o.id}`}
                     onClick={() => handleUpdateStatus(o.id, "preparing")}
+                    disabled={pendingOrderIds.has(o.id)}
                     className="w-full text-center py-2 bg-primary hover:bg-secondary text-white font-bold rounded-lg text-[10px] uppercase shadow-sm transition-all"
                   >
-                    Start Preparing
+                    {pendingOrderIds.has(o.id) ? "Updating..." : "Start Preparing"}
                   </button>
                 </div>
               ))}
@@ -875,18 +893,20 @@ function CafeOrdersList({
                     <button
                       id={`btn-ready-${o.id}`}
                       onClick={() => handleUpdateStatus(o.id, "ready")}
+                      disabled={pendingOrderIds.has(o.id)}
                       className="w-full text-center py-2 bg-primary hover:bg-secondary text-white font-bold rounded-lg text-[10px] uppercase shadow-sm transition-all"
                     >
-                      Mark Ready
+                      {pendingOrderIds.has(o.id) ? "Updating..." : "Mark Ready"}
                     </button>
                   )}
                   {o.status === "ready" && (
                     <button
                       id={`btn-complete-${o.id}`}
                       onClick={() => handleUpdateStatus(o.id, "completed")}
+                      disabled={pendingOrderIds.has(o.id)}
                       className="w-full text-center py-2 bg-success text-white font-bold rounded-lg text-[10px] uppercase shadow-sm transition-all"
                     >
-                      Mark Delivered
+                      {pendingOrderIds.has(o.id) ? "Updating..." : "Mark Delivered"}
                     </button>
                   )}
                 </div>
