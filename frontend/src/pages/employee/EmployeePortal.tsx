@@ -82,7 +82,23 @@ export default function EmployeePortal() {
       }
 
       const ordersData = await apiGet("/api/employee/orders");
-      setMyOrders(ordersData.data.items);
+      const orders = Array.isArray(ordersData.data?.items)
+        ? ordersData.data.items
+        : [];
+      setMyOrders(
+        orders.map((order: any) => ({
+          ...order,
+          items: (order.order_items || []).map((item: any) => ({
+            name:
+              item.menu_items?.name ||
+              item.item_name_snapshot ||
+              "Unknown item",
+            quantity: item.quantity,
+          })),
+          amount: Number(order.total_amount || 0),
+          date: order.created_at,
+        })),
+      );
     } catch (e) {
       console.error("Error loading employee portal data", e);
     }
@@ -667,14 +683,15 @@ function EmployeeDashboard({
                   </div>
                 </div>
                 <div className="text-right">
-                  <span className="text-xs font-black text-danger block">
-                    -{formatETB(item.total_amount)}
-                  </span>
                   <span
                     className={`inline-block text-[9px] font-bold uppercase ${
-                      item.status === "confirmed"
+                      item.status === "completed"
                         ? "text-success"
-                        : "text-warning"
+                        : item.status === "ready"
+                          ? "text-ready"
+                          : item.status === "preparing"
+                            ? "text-warning"
+                            : "text-slate-500"
                     }`}
                   >
                     {item.status}
@@ -1264,16 +1281,21 @@ function EmployeeOrdersHistory({ myOrders }: { myOrders: any[] }) {
                       <td className="py-3 px-4 text-center">
                         <span
                           className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                            item.status === "confirmed"
+                            item.status === "completed"
                               ? "bg-green-50 text-success"
-                              : "bg-amber-50 text-warning"
+                              : item.status === "ready"
+                                ? "bg-blue-50 text-ready"
+                                : item.status === "preparing"
+                                  ? "bg-amber-50 text-warning"
+                                  : "bg-slate-100 text-slate-600"
                           }`}
                         >
                           {item.status}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-slate-600 font-semibold hidden md:table-cell">
-                        {item.waiterName || "Staff"}
+                        {item.users_orders_waiter_idTousers?.fullName ||
+                          "Online Order"}
                       </td>
                       <td className="py-3 px-6 text-slate-400 font-semibold">
                         {new Date(item.date).toLocaleString()}
@@ -1293,7 +1315,8 @@ function EmployeeOrdersHistory({ myOrders }: { myOrders: any[] }) {
                           </p>
                           <p>
                             <strong>Server/Waiter:</strong>{" "}
-                            {item.waiterName || "Staff"}
+                            {item.users_orders_waiter_idTousers?.fullName ||
+                              "Online Order"}
                           </p>
                         </td>
                       </tr>

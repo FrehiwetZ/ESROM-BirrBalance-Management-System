@@ -60,14 +60,11 @@ export const getOrders = async (req, res, next) => {
         include: {
           order_items: {
             include: {
-              menu_items: {
-                select: { name: true, price: true },
-              },
+              menu_items: { select: { name: true, price: true } },
             },
           },
-          cafes: {
-            select: { name: true },
-          },
+          cafes: { select: { name: true } },
+          users_orders_waiter_idTousers: { select: { fullname: true } },
         },
         orderBy,
         skip: pagination.skip,
