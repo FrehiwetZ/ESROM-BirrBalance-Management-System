@@ -4,6 +4,7 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
 } from "react";
 import i18n from "../i18n/i18n";
 import { useTheme } from "./ThemeContext";
@@ -25,6 +26,7 @@ interface AppContextType {
   language: "en" | "am";
   cart: { item: MenuItem; quantity: number }[];
   offlineQueue: any[];
+  offlineOrderResult: any | null;
   isOffline: boolean;
   notifications: any[];
   unreadCount: number;
@@ -52,6 +54,7 @@ interface AppContextType {
   markNotificationsAsRead: () => void;
   triggerSync: () => Promise<void>;
   addToOfflineQueue: (order: any) => void;
+  clearOfflineOrderResult: () => void;
   setGlobalLoading: (loading: boolean) => void;
 
   // API triggers
@@ -111,6 +114,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [offlineQueue, setOfflineQueue] = useState<any[]>(() => {
     return JSON.parse(localStorage.getItem("esrom_offline_queue") || "[]");
   });
+  const [offlineOrderResult, setOfflineOrderResult] = useState<any | null>(
+    null,
+  );
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -129,13 +135,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const syncInProgressRef = useRef(false);
 
   // Synced state triggers
   const apiGet = useCallback(
     async (path: string) => {
-      if (isOffline) {
-        throw new Error("Offline mode active. API calls unavailable.");
-      }
       const headers: HeadersInit = { "Content-Type": "application/json" };
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
@@ -162,9 +166,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const apiPost = useCallback(
     async (path: string, body: any) => {
-      if (isOffline) {
-        throw new Error("Offline mode active. API calls unavailable.");
-      }
       const headers: HeadersInit = { "Content-Type": "application/json" };
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
@@ -175,22 +176,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify(body),
       });
 
-      // NEW LOGIC: Differentiate between a failed login and an expired session
       if (response.status === 401) {
-        if (path === "/api/auth/login") {
-          // If it's a login attempt, extract the backend's specific error message (e.g., "Invalid password")
-          const err = await response
-            .json()
-            .catch(() => ({ message: "Invalid Employee ID or password" }));
-          throw new Error(err.message);
-        } else {
-          // If it's any other route, it truly is an expired session
-          localStorage.removeItem("token");
-          localStorage.removeItem("role");
-          setToken(null);
-          setUser(null);
-          throw new Error("Your session has expired");
-        }
+        localStorage.removeItem("token");
+        localStorage.removeItem("role");
+        setToken(null);
+        setUser(null);
+        throw new Error("Your session has expired");
       }
 
       if (!response.ok) {
@@ -207,9 +198,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const apiPut = useCallback(
     async (path: string, body: any) => {
-      if (isOffline) {
-        throw new Error("Offline mode active. API calls unavailable.");
-      }
       const headers: HeadersInit = { "Content-Type": "application/json" };
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
@@ -240,9 +228,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const apiPatch = useCallback(
     async (path: string, body: any) => {
-      if (isOffline) {
-        throw new Error("Offline mode active. API calls unavailable.");
-      }
       const headers: HeadersInit = { "Content-Type": "application/json" };
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
@@ -273,9 +258,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const apiDelete = useCallback(
     async (path: string) => {
-      if (isOffline) {
-        throw new Error("Offline mode active. API calls unavailable.");
-      }
       const headers: HeadersInit = { "Content-Type": "application/json" };
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
@@ -497,37 +479,67 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const addToOfflineQueue = (order: any) => {
+    setOfflineOrderResult(null);
     const queue = [...offlineQueue, order];
     setOfflineQueue(queue);
     localStorage.setItem("esrom_offline_queue", JSON.stringify(queue));
   };
 
+  const clearOfflineOrderResult = () => setOfflineOrderResult(null);
+
   // Sync waiter offline queue
-  const triggerSync = async () => {
-    if (offlineQueue.length === 0 || isOffline) return;
-    setGlobalLoading(true);
-    try {
-      const response = await apiPost("/api/waiter/sync-orders", {
-        orders: offlineQueue,
-      });
-      setOfflineQueue([]);
-      localStorage.setItem("esrom_offline_queue", "[]");
-      setGlobalLoading(false);
-      fetchNotifications();
-    } catch (e) {
-      console.error("Sync failed:", e);
-      setGlobalLoading(false);
-      throw e;
+  const triggerSync = useCallback(async () => {
+    if (
+      offlineQueue.length === 0 ||
+      !token ||
+      syncInProgressRef.current
+    ) {
+      return;
     }
-  };
+
+    syncInProgressRef.current = true;
+    setGlobalLoading(true);
+
+    const stillFailed: any[] = [];
+
+    try {
+      for (const order of offlineQueue) {
+        try {
+          const response = await apiPost("/api/waiter/order", order);
+          if (response?.data) setOfflineOrderResult(response.data);
+        } catch (e) {
+          console.error("Retry failed for queued order:", e);
+          stillFailed.push(order);
+        }
+      }
+
+      setOfflineQueue(stillFailed);
+      localStorage.setItem("esrom_offline_queue", JSON.stringify(stillFailed));
+
+      if (stillFailed.length === 0) {
+        fetchNotifications();
+      }
+    } finally {
+      syncInProgressRef.current = false;
+      setGlobalLoading(false);
+    }
+  }, [offlineQueue, token, apiPost, fetchNotifications]);
 
   // Auto-sync when online restores
   useEffect(() => {
-    if (!isOffline && offlineQueue.length > 0 && token) {
+    if (offlineQueue.length > 0 && token) {
       triggerSync().catch(console.error);
     }
-  }, [isOffline, offlineQueue, token]);
+  }, [offlineQueue.length, token, triggerSync]);
+  useEffect(() => {
+    if (offlineQueue.length === 0 || !token) return;
 
+    const interval = setInterval(() => {
+      triggerSync().catch(console.error);
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [offlineQueue.length, token, triggerSync]);
   const refreshData = async () => {
     await fetchMe();
     await fetchNotifications();
@@ -542,6 +554,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         language,
         cart,
         offlineQueue,
+        offlineOrderResult,
         isOffline,
         notifications,
         unreadCount,
@@ -562,6 +575,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         markNotificationsAsRead,
         triggerSync,
         addToOfflineQueue,
+        clearOfflineOrderResult,
         setGlobalLoading,
         refreshData,
         apiGet,

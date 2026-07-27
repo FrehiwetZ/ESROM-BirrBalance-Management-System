@@ -15,11 +15,22 @@ import {
 } from "lucide-react";
 
 export default function WaiterPanel() {
-  const { user, apiGet, apiPost } = useApp();
+  const {
+    user,
+    apiGet,
+    apiPost,
+    addToOfflineQueue,
+    isOffline,
+    offlineQueue,
+    offlineOrderResult,
+    clearOfflineOrderResult,
+  } = useApp();
   const { t } = useTranslation();
 
   // Workflow states: 'scan' | 'order' | 'success'
-  const [step, setStep] = useState<"scan" | "order" | "success">("scan");
+  const [step, setStep] = useState<
+    "scan" | "verifying" | "order" | "success"
+  >("scan");
 
   // Scanned session state
   const [scannedEmployee, setScannedEmployee] = useState<any | null>(null);
@@ -37,9 +48,46 @@ export default function WaiterPanel() {
   const [finalTxId, setFinalTxId] = useState("");
   const [finalTotal, setFinalTotal] = useState(0);
   const [finalRemaining, setFinalRemaining] = useState(0);
+  const [retryCountdown, setRetryCountdown] = useState(15);
+  const [isAuthorizing, setIsAuthorizing] = useState(false);
+  const [offlineOrderQueued, setOfflineOrderQueued] = useState(false);
 
   // HTML5 QR Scanner
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+
+  useEffect(() => {
+    if (offlineQueue.length === 0) return;
+
+    setRetryCountdown(15);
+    const interval = setInterval(() => {
+      setRetryCountdown((seconds) => (seconds <= 1 ? 15 : seconds - 1));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [offlineQueue.length]);
+
+  useEffect(() => {
+    if (offlineQueue.length === 0) {
+      setAuthError("");
+      return;
+    }
+
+    setAuthError(
+      `Connection lost — order saved. Retrying automatically in ${retryCountdown}s.`,
+    );
+  }, [offlineQueue.length, retryCountdown]);
+
+  useEffect(() => {
+    if (!offlineOrderResult) return;
+
+    setFinalTxId(offlineOrderResult.order_id);
+    setFinalTotal(offlineOrderResult.total_amount);
+    setFinalRemaining(offlineOrderResult.remaining_balance);
+    setEmployeePassword("");
+    setAuthError("");
+    setStep("success");
+    clearOfflineOrderResult();
+  }, [offlineOrderResult, clearOfflineOrderResult]);
 
   // Load menu items
   useEffect(() => {
@@ -72,6 +120,7 @@ export default function WaiterPanel() {
                 console.log("QR DETECTED:", decodedText);
                 scanner.clear();
                 scannerRef.current = null;
+                setStep("verifying");
                 await handleQrScan(decodedText.trim());
               },
               (err) => {
@@ -111,9 +160,11 @@ export default function WaiterPanel() {
       setQrSessionId(res.data.qr_session_id);
       setCafeId(res.data.cafe_id);
       setCart([]);
+      setOfflineOrderQueued(false);
       setStep("order");
     } catch (e: any) {
       setLookupError(e.message || "Error verifying QR token.");
+      setStep("scan");
     }
   };
 
@@ -156,6 +207,7 @@ export default function WaiterPanel() {
       return;
     }
     setAuthError("");
+    setIsAuthorizing(true);
 
     try {
       const formattedItems = cart.map((c) => ({
@@ -191,9 +243,30 @@ export default function WaiterPanel() {
       setEmployeePassword("");
       setStep("success");
     } catch (e: any) {
-      setAuthError(
-        e.message || "Authorization failed. Please check the password.",
-      );
+      const isNetworkError = e.message === "Failed to fetch" || isOffline;
+
+      if (isNetworkError) {
+        const formattedItems = cart.map((c) => ({
+          menu_item_id: c.item.id,
+          quantity: c.quantity,
+        }));
+        addToOfflineQueue({
+          employee_id: scannedEmployee.id,
+          cafe_id: cafeId,
+          qr_session_id: qrSessionId,
+          password: employeePassword,
+          items: formattedItems,
+        });
+        setOfflineOrderQueued(true);
+        setAuthError(
+          "Connection lost — order saved and will submit automatically once you're back online.",
+        );
+      } else {
+        setAuthError(
+          e.message || "Authorization failed. Please check the password.",
+        );
+      }
+
       try {
         const audioCtx = new (
           window.AudioContext || (window as any).webkitAudioContext
@@ -205,6 +278,8 @@ export default function WaiterPanel() {
         oscillator.start();
         oscillator.stop(audioCtx.currentTime + 0.3);
       } catch (e) {}
+    } finally {
+      setIsAuthorizing(false);
     }
   };
 
@@ -231,6 +306,7 @@ export default function WaiterPanel() {
               setQrSessionId(null);
               setCafeId(null);
               setCart([]);
+              setOfflineOrderQueued(false);
               setStep("scan");
             }}
             className="flex items-center gap-2 px-4 py-2 border border-slate-200 hover:bg-slate-50 rounded-xl text-xs font-bold text-slate-600 transition-all focus:outline-none"
@@ -269,6 +345,16 @@ export default function WaiterPanel() {
               <span>Camera scan state online</span>
             </div>
           </div>
+        </div>
+      )}
+
+      {step === "verifying" && (
+        <div className="bg-white rounded-3xl p-10 border border-slate-100 shadow-sm max-w-lg mx-auto text-center space-y-4">
+          <div className="mx-auto w-12 h-12 rounded-full border-4 border-slate-200 border-t-primary animate-spin" />
+          <h3 className="text-sm font-black text-primary">Verifying QR code...</h3>
+          <p className="text-xs text-subtle-text">
+            Please wait while we verify the employee QR token.
+          </p>
         </div>
       )}
 
@@ -430,10 +516,18 @@ export default function WaiterPanel() {
                     <button
                       id="waiter-debit-submit-btn"
                       onClick={handleConfirmDebit}
-                      disabled={!employeePassword}
+                      disabled={
+                        !employeePassword ||
+                        isAuthorizing ||
+                        offlineOrderQueued
+                      }
                       className="w-full py-3.5 bg-primary hover:bg-secondary text-white font-bold uppercase text-[10px] tracking-wider rounded-xl transition-all shadow-md disabled:opacity-45"
                     >
-                      Authorize & Debit Meal
+                      {isAuthorizing
+                        ? "Authorizing..."
+                        : offlineOrderQueued
+                          ? "Saved Offline"
+                          : "Authorize & Debit Meal"}
                     </button>
                   </div>
                 )}

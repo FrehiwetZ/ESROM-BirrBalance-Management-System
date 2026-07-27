@@ -120,11 +120,17 @@ export default function EmployeePortal() {
 
       const interval = setInterval(() => {
         loadEmployeeData();
-      }, 10000); // refetch every 10 seconds
+      }, 5000); // keep the order history current
 
-      return () => clearInterval(interval);
+      const handleWindowFocus = () => loadEmployeeData();
+      window.addEventListener("focus", handleWindowFocus);
+
+      return () => {
+        clearInterval(interval);
+        window.removeEventListener("focus", handleWindowFocus);
+      };
     }
-  }, [user, location.pathname]);
+  }, [user, location.pathname, activeCafe]);
 
   if (!user || user.role !== "employee") return null;
   if (!activeCafe) {
