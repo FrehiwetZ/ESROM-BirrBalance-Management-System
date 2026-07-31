@@ -1102,7 +1102,7 @@ function EmployeeProfilePage({
         <div className="lg:col-span-5 space-y-6">
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm text-center flex flex-col items-center space-y-3">
             <div className="w-16 h-16 rounded-full bg-slate-100 border flex items-center justify-center font-black text-primary text-2xl uppercase shadow-sm">
-              {user.fullname.charAt(0)}
+              {user.fullName?.charAt(0) || "?"}
             </div>
             <div>
               <h3 className="text-base font-black text-primary">{user.fullname}</h3>
