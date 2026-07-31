@@ -460,6 +460,7 @@ export function TopNav({ onMenuClick }: { onMenuClick?: () => void }) {
               >
                 <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center font-bold text-white uppercase shadow-inner flex-shrink-0">
                   {user?.fullName?.charAt(0) || "?"}
+
                 </div>
                 <span className="hidden xl:inline text-xs font-bold text-text-primary max-w-[120px] truncate">
                   {user.fullName}

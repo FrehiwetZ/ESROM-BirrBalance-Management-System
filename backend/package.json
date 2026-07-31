@@ -43,7 +43,7 @@
     "save-dev": "^0.0.1-security"
   },
   "devDependencies": {
-    "@dotenvx/dotenvx": "^2.14.0",
+    "@dotenvx/dotenvx": "^2.15.1",
     "@types/node": "^26.0.1",
     "tsx": "^4.22.4"
   }

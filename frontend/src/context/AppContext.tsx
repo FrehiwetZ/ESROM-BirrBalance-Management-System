@@ -217,7 +217,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // All backend update routes are PATCH; kept as an alias for existing apiPut call sites.
   const apiPut = apiPatch;
-
   const apiDelete = useCallback(async (path: string) => {
     const res = await performFetch(path, { method: 'DELETE' });
     const json = await res.json();
@@ -306,10 +305,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         read: n.is_read,
         timestamp: n.created_at ? new Date(n.created_at).toLocaleString() : '',
       }));
-
       setNotifications(items);
     } catch (error) {
       console.error("Error loading notifications", error);
+
     }
   }, [token, apiGet, isOffline]);
 
