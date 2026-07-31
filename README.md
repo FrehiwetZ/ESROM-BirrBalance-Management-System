@@ -480,3 +480,4 @@ This project uses **GitHub Actions** for automated CI/CD. Workflow files live in
 | **Reports** | CSV, XLSX, PDF |
 | **Languages** | English, Amharic |
 | **Currency** | Ethiopian Birr (ETB) |
+# CI test
