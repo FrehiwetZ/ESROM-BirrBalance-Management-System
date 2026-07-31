@@ -1,5 +1,7 @@
 # ESROM BirrBalance — Backend API
 
+> For the full project overview (architecture, all portals, tech stack, data flows), see the [root README](../README.md).
+
 Backend REST API for the ESROM BirrBalance Management System. This system manages employee meal balances, cafeteria transactions, and financial reporting between a company and its partnered cafés.
 
 ## Tech Stack
