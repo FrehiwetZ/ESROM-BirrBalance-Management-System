@@ -20,6 +20,7 @@ It replaces manual meal vouchers or cash handling with a digital balance ledger:
 - [Security Features](#security-features)
 - [Getting Started](#getting-started)
 - [CI/CD](#cicd)
+- [Docker Deployment (On-Prem)](#docker-deployment-on-prem)
 - [Environment Variables](#environment-variables)
 - [Team & Status](#team--status)
 
@@ -426,6 +427,36 @@ This project uses **GitHub Actions** for automated CI/CD. Workflow files live in
 
 ---
 
+## Docker Deployment (On-Prem)
+
+Deploy on a **client local PC** so users on the same office network can access the app from phones, tablets, or PCs.
+
+### Quick start
+
+```bash
+cp .env.docker.example .env
+# Edit .env — set passwords, JWT_SECRET, AES_SECRET, and CORS_ORIGIN to http://<server-lan-ip>
+
+docker compose up -d --build
+```
+
+Open **`http://<server-lan-ip>/`** from any device on the LAN.
+
+### What's included
+
+| Service | Description |
+|---------|-------------|
+| **nginx** | Single entry point on port 80 |
+| **frontend** | React PWA |
+| **backend** | Express API + auto migrations on startup |
+| **postgres** | PostgreSQL with persistent volume |
+
+Full step-by-step guide (firewall, backups, HTTPS for QR camera, rollout checklist): **[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)**
+
+**Run on your PC first:** **[docs/deployment.local.md](./docs/deployment.local.md)**
+
+---
+
 ## Environment Variables
 
 ### Backend (`.env`)
@@ -480,4 +511,4 @@ This project uses **GitHub Actions** for automated CI/CD. Workflow files live in
 | **Reports** | CSV, XLSX, PDF |
 | **Languages** | English, Amharic |
 | **Currency** | Ethiopian Birr (ETB) |
-# CI test
+
