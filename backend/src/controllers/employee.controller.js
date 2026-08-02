@@ -34,7 +34,13 @@ export const getProfile = asyncHandler(async (req, res) => {
 
   return successResponse(res, user, "Profile fetched successfully");
 });
-
+export const listCafes = asyncHandler(async (req, res) => {
+  const cafes = await prisma.cafes.findMany({
+    where: { is_active: true },
+    select: { id: true, name: true, location: true },
+  });
+  return successResponse(res, cafes, "Cafes fetched successfully");
+});
 export const getBalance = asyncHandler(async (req, res) => {
   const balance = await getEmployeeBalance(req.user.id);
   return successResponse(res, { balance }, "Balance fetched successfully");
@@ -43,7 +49,11 @@ export const getBalance = asyncHandler(async (req, res) => {
 export const getOrders = async (req, res, next) => {
   try {
     const pagination = parsePagination(req.query);
-    const orderBy = parseSort(req.query, ["created_at", "total_amount", "status"], "-created_at");
+    const orderBy = parseSort(
+      req.query,
+      ["created_at", "total_amount", "status"],
+      "-created_at",
+    );
     const where = { employee_id: req.user.id };
     const [orders, total] = await Promise.all([
       prisma.orders.findMany({
@@ -51,14 +61,11 @@ export const getOrders = async (req, res, next) => {
         include: {
           order_items: {
             include: {
-              menu_items: {
-                select: { name: true, price: true },
-              },
+              menu_items: { select: { name: true, price: true } },
             },
           },
-          cafes: {
-            select: { name: true },
-          },
+          cafes: { select: { name: true } },
+          users_orders_waiter_idTousers: { select: { fullname: true } },
         },
         orderBy,
         skip: pagination.skip,
@@ -114,14 +121,19 @@ export const createOnlineOrder = async (req, res, next) => {
 export const getNotifications = async (req, res, next) => {
   try {
     const pagination = parsePagination(req.query);
-    const orderBy = parseSort(req.query, ["created_at", "is_read"], "-created_at");
-    const data = await listUserNotifications(req.user, pagination, req.ip, orderBy);
-
-    return successResponse(
-      res,
-      data,
-      "Notifications fetched successfully",
+    const orderBy = parseSort(
+      req.query,
+      ["created_at", "is_read"],
+      "-created_at",
     );
+    const data = await listUserNotifications(
+      req.user,
+      pagination,
+      req.ip,
+      orderBy,
+    );
+
+    return successResponse(res, data, "Notifications fetched successfully");
   } catch (error) {
     next(error);
   }
@@ -133,7 +145,11 @@ export const markNotificationRead = asyncHandler(async (req, res) => {
     throw new AppError("notification id must be a positive integer", 400);
   }
 
-  const notification = await markUserNotificationRead(req.user, notificationId, req.ip);
+  const notification = await markUserNotificationRead(
+    req.user,
+    notificationId,
+    req.ip,
+  );
   return successResponse(res, notification, "Notification marked as read");
 });
 
@@ -283,7 +299,12 @@ export const createFeedback = async (req, res, next) => {
       return created;
     });
 
-    return successResponse(res, feedback, "Feedback submitted successfully", 201);
+    return successResponse(
+      res,
+      feedback,
+      "Feedback submitted successfully",
+      201,
+    );
   } catch (error) {
     next(error);
   }

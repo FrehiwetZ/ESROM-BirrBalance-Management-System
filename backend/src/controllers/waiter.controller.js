@@ -1,12 +1,19 @@
 import prisma from "../config/db.js";
 import { comparePassword } from "../services/auth.service.js";
-import { createQRSession, consumeQRSession, decryptQRToken, hashQRToken } from "../services/qr.service.js";
+import {
+  createQRSession,
+  consumeQRSession,
+  decryptQRToken,
+  hashQRToken,
+} from "../services/qr.service.js";
 import { getEmployeeBalance } from "../services/balance.service.js";
 import { createOrderWithBalanceDeduction } from "../services/order.service.js";
 import { validateOfflineOrder } from "../validators/order.validators.js";
 import { successResponse } from "../utils/response.js";
 import { AppError } from "../utils/AppError.js";
 import { writeAuditLog } from "../services/audit.service.js";
+import { getPublicMenuItems } from "../services/cafe.service.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
 
 export const scanQR = async (req, res, next) => {
   try {
@@ -77,7 +84,6 @@ export const scanQR = async (req, res, next) => {
 
       return qrSession;
     });
-
     return successResponse(
       res,
       {
@@ -90,6 +96,7 @@ export const scanQR = async (req, res, next) => {
         },
         qr_session_id: session.qrSessionId,
         session_expires_at: session.expiresAt,
+        cafe_id: req.user.cafeId,
       },
       "Employee verified successfully",
     );
@@ -98,12 +105,18 @@ export const scanQR = async (req, res, next) => {
   }
 };
 
-export const lookupEmployee = async (req, res, next) => {
+export const getMenu = asyncHandler(async (req, res) => {
+  if (!req.user.cafeId) {
+    throw new AppError("Waiter is not assigned to a cafe", 403);
+  }
+  const items = await getPublicMenuItems(req.user.cafeId);
+  return successResponse(res, items, "Menu items fetched successfully");
+});
+
+export const createOfflineOrder = async (req, res, next) => {
   try {
-    const employeeExternalId =
-      typeof req.body.employee_external_id === "string"
-        ? req.body.employee_external_id.trim()
-        : "";
+    const { employee_id, password, items, cafe_id, qr_session_id } =
+      validateOfflineOrder(req.body);
 
     if (!employeeExternalId) {
       throw new AppError("employee_external_id is required", 400);
@@ -213,14 +226,20 @@ const processOfflineOrder = async (actor, body, ipAddress) => {
       employeeId: employee_id,
       waiterId: actor.id,
       cafeId: cafe_id,
-      tx,
-    }),
-  });
-};
-
-export const createOfflineOrder = async (req, res, next) => {
-  try {
-    const result = await processOfflineOrder(req.user, req.body, req.ip);
+      waiterId: req.user.id,
+      items,
+      orderMethod: "offline_qr",
+      actor: req.user,
+      ipAddress: req.ip,
+      beforeCreate: (tx) =>
+        consumeQRSession({
+          sessionId: qr_session_id,
+          employeeId: employee_id,
+          waiterId: req.user.id,
+          cafeId: cafe_id,
+          tx,
+        }),
+    });
 
     return successResponse(
       res,

@@ -9,6 +9,7 @@ import {
   createOnlineOrder,
   createFeedback,
   changePassword,
+  listCafes,
 } from "../controllers/employee.controller.js";
 import { listPublicMenuItems } from "../controllers/cafe.controller.js";
 
@@ -20,11 +21,11 @@ router.use(requireRole(ROLES.EMPLOYEE));
 router.get("/profile", getProfile);
 router.get("/balance", getBalance);
 router.get("/orders", getOrders);
+router.get("/cafes", listCafes);
 router.get("/cafes/:cafeId/menu", listPublicMenuItems);
 router.post("/orders", createOnlineOrder);
 router.post("/generate-qr", generateQR);
 router.post("/feedback", createFeedback);
 router.patch("/password", changePassword);
-
 
 export default router;

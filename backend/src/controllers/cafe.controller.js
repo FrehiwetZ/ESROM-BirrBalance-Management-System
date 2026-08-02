@@ -1,3 +1,4 @@
+import prisma from "../config/db.js";
 import { successResponse } from "../utils/response.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendReportResponse } from "../utils/report.js";
@@ -11,6 +12,7 @@ import {
   getCafeStatistics,
   getCafeWaiters,
   getMenuItems,
+  getPublicMenuItems,
   getOperationalReport,
   getPublicMenuItems,
   setMenuItemAvailability,
@@ -41,20 +43,22 @@ export const listPublicMenuItems = asyncHandler(async (req, res) => {
 });
 
 export const listCafeOrders = asyncHandler(async (req, res) => {
-  const data = await getCafeOrders(req.user, parsePagination(req.query), req.ip);
-  return successResponse(res, data, "Cafe orders fetched successfully");
-});
+  if (!req.user.cafeId) {
+    throw new AppError("You are not assigned to a cafe", 403);
+  }
 
-export const listCafeWaiters = asyncHandler(async (req, res) => {
-  const waiters = await getCafeWaiters(req.user, req.ip);
-  return successResponse(res, waiters, "Cafe waiters fetched successfully");
-});
+  const orders = await prisma.orders.findMany({
+    where: { cafe_id: req.user.cafeId },
+    include: {
+      order_items: true,
+      users_orders_employee_idTousers: { select: { fullname: true } },
+      users_orders_waiter_idTousers: { select: { fullname: true } },
+    },
+    orderBy: { created_at: "desc" },
+  });
 
-export const listCafeFeedback = asyncHandler(async (req, res) => {
-  const data = await getCafeFeedback(req.user, parsePagination(req.query), req.ip);
-  return successResponse(res, data, "Cafe feedback fetched successfully");
+  return successResponse(res, orders, "Cafe orders fetched successfully");
 });
-
 export const addMenuItem = asyncHandler(async (req, res) => {
   const payload = validateMenuItemCreate(req.body);
   const item = await createMenuItem(req.user, payload, req.file, req.ip);
@@ -77,8 +81,17 @@ export const removeMenuItem = asyncHandler(async (req, res) => {
 export const markMenuItemAvailability = asyncHandler(async (req, res) => {
   const id = validateMenuItemId(req.params);
   const payload = validateAvailability(req.body);
-  const item = await setMenuItemAvailability(req.user, id, payload.is_available, req.ip);
-  return successResponse(res, item, "Menu item availability updated successfully");
+  const item = await setMenuItemAvailability(
+    req.user,
+    id,
+    payload.is_available,
+    req.ip,
+  );
+  return successResponse(
+    res,
+    item,
+    "Menu item availability updated successfully",
+  );
 });
 
 export const cafeAnalytics = asyncHandler(async (req, res) => {
@@ -96,7 +109,11 @@ export const cafeOperationalReport = asyncHandler(async (req, res) => {
   const report = await getOperationalReport(req.user, params, req.ip);
 
   if (report.format === "json") {
-    return successResponse(res, report.data, "Cafe operational report generated successfully");
+    return successResponse(
+      res,
+      report.data,
+      "Cafe operational report generated successfully",
+    );
   }
 
   return sendReportResponse(res, report);

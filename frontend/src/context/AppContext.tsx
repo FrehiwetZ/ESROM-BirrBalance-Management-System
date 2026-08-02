@@ -6,22 +6,28 @@ import { User, MenuItem, Order, Feedback, AuditLog, Message, Conversation, Waite
 interface AppContextType {
   user: User | null;
   token: string | null;
-  theme: 'light' | 'dark';
-  language: 'en' | 'am';
+  theme: "light" | "dark";
+  language: "en" | "am";
   cart: { item: MenuItem; quantity: number }[];
   offlineQueue: any[];
+  offlineOrderResult: any | null;
   isOffline: boolean;
   notifications: any[];
   unreadCount: number;
   globalLoading: boolean;
-  activeCafe: { id: string; name: string; location: string; image: string } | null;
+  activeCafe: {
+    id: string;
+    name: string;
+    location: string;
+    image: string;
+  } | null;
   setActiveCafe: (cafe: any) => void;
   showLogoutModal: boolean;
   setShowLogoutModal: (show: boolean) => void;
-  
+
   // Actions
   toggleTheme: () => void;
-  setLanguage: (lang: 'en' | 'am') => void;
+  setLanguage: (lang: "en" | "am") => void;
   login: (employeeId: string, password: string) => Promise<any>;
   logout: () => void;
   addToCart: (item: MenuItem) => void;
@@ -32,8 +38,9 @@ interface AppContextType {
   markNotificationsAsRead: () => void;
   triggerSync: () => Promise<void>;
   addToOfflineQueue: (order: any) => void;
+  clearOfflineOrderResult: () => void;
   setGlobalLoading: (loading: boolean) => void;
-  
+
   // API triggers
   refreshData: () => Promise<void>;
   apiGet: (path: string) => Promise<any>;
@@ -59,7 +66,7 @@ function normalizeApiData<T = any>(data: any): T {
   if (Array.isArray(data)) {
     return data.map(normalizeApiData) as any;
   }
-  if (data && typeof data === 'object') {
+  if (data && typeof data === "object") {
     const result: any = {};
     for (const key of Object.keys(data)) {
       result[KEY_RENAMES[key] ?? toCamelCase(key)] = normalizeApiData(data[key]);
@@ -82,26 +89,49 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(() => {
+    const cachedUser = localStorage.getItem("user");
+    if (!cachedUser) return null;
+
     try {
-      const u = localStorage.getItem('user');
-      return u ? JSON.parse(u) : null;
+      return JSON.parse(cachedUser) as User;
     } catch {
+      localStorage.removeItem("user");
       return null;
     }
   });
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
+  const [token, setToken] = useState<string | null>(
+    localStorage.getItem("token"),
+  );
   const { theme, toggleTheme } = useTheme();
-  const [language, setLangState] = useState<'en' | 'am'>((localStorage.getItem('esrom_lang') as 'en' | 'am') || 'en');
+  const [language, setLangState] = useState<"en" | "am">(
+    (localStorage.getItem("esrom_lang") as "en" | "am") || "en",
+  );
   const [cart, setCart] = useState<{ item: MenuItem; quantity: number }[]>([]);
   const [offlineQueue, setOfflineQueue] = useState<any[]>(() => {
-    return JSON.parse(localStorage.getItem('esrom_offline_queue') || '[]');
+    return JSON.parse(localStorage.getItem("esrom_offline_queue") || "[]");
   });
+  const [offlineOrderResult, setOfflineOrderResult] = useState<any | null>(
+    null,
+  );
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [globalLoading, setGlobalLoading] = useState(false);
-  const [activeCafe, setActiveCafe] = useState<any>(null);
+  const [activeCafe, setActiveCafeState] = useState<any>(() => {
+    const cached = localStorage.getItem("activeCafe");
+    return cached ? JSON.parse(cached) : null;
+  });
+
+  const setActiveCafe = (cafe: any) => {
+    setActiveCafeState(cafe);
+    if (cafe) {
+      localStorage.setItem("activeCafe", JSON.stringify(cafe));
+    } else {
+      localStorage.removeItem("activeCafe");
+    }
+  };
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const syncInProgressRef = useRef(false);
 
   // Synced state triggers
   // Attempt to refresh token using stored refresh_token. Single-flight:
@@ -230,47 +260,68 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [performFetch]);
 
   // Auth fetch - ask server for the current employee profile only if role is employee
-  const fetchMe = useCallback(async () => {
-    const activeToken = localStorage.getItem('token') || token;
-    if (!activeToken || isOffline) return;
+const fetchMe = useCallback(async () => {
+  const activeToken = localStorage.getItem("token") || token;
+  if (!activeToken || isOffline) return;
 
-    const storedRole = localStorage.getItem('role');
-    const storedUserStr = localStorage.getItem('user');
+  const storedRole = localStorage.getItem("role");
+  const storedUserStr = localStorage.getItem("user");
 
-    if (storedRole && storedRole !== 'employee') {
-      if (storedUserStr) {
-        try {
-          setUser(JSON.parse(storedUserStr));
-        } catch (e) {
-          console.error('Error parsing stored user', e);
-        }
+  // Non-employees don't have an employee profile endpoint.
+  // Restore the cached user instead.
+  if (storedRole && storedRole !== "employee") {
+    if (storedUserStr) {
+      try {
+        setUser(JSON.parse(storedUserStr));
+      } catch (e) {
+        console.error("Error parsing cached user:", e);
+        localStorage.removeItem("user");
       }
-      return;
     }
+    return;
+  }
 
-    try {
-      const [res, balanceRes] = await Promise.all([
-        apiGet('/api/employee/profile'),
-        apiGet('/api/employee/balance').catch(() => null),
-      ]);
-      const apiUser = normalizeApiData(res.data || res);
+  try {
+    const [profileRes, balanceRes] = await Promise.all([
+      apiGet("/api/employee/profile"),
+      apiGet("/api/employee/balance").catch(() => null),
+    ]);
 
-      const mappedRole = normalizeRole(apiUser.roles?.[0]);
-      const balance = Number(balanceRes?.data?.balance ?? balanceRes?.balance ?? 0);
-      const userData = { ...apiUser, balance, role: mappedRole || apiUser.role || 'employee' };
-      setUser(userData);
-      localStorage.setItem('user', JSON.stringify(userData));
-      if (mappedRole) localStorage.setItem('role', mappedRole);
-    } catch (e) {
-      console.error('Failed fetching profile', e);
+    const apiUser = normalizeApiData(profileRes.data || profileRes);
+
+    const mappedRole = normalizeRole(apiUser.roles?.[0]);
+    const balance = Number(
+      balanceRes?.data?.balance ??
+      balanceRes?.balance ??
+      0
+    );
+
+    const userData = {
+      ...apiUser,
+      balance,
+      role: mappedRole || apiUser.role || "employee",
+    };
+
+    setUser(userData);
+    localStorage.setItem("user", JSON.stringify(userData));
+
+    if (mappedRole) {
+      localStorage.setItem("role", mappedRole);
     }
-  }, [token, isOffline, apiGet]);
+  } catch (e) {
+    console.error("Failed fetching profile:", e);
+  }
+}, [token, isOffline, apiGet]);
 
+  // Rehydrate the authenticated employee after a full page reload. The cached
+  // user above lets the portal render immediately while this refreshes current
+  // profile and balance data from the API.
   useEffect(() => {
-    if (token) {
+    const currentRole = localStorage.getItem("role");
+    if (token && currentRole === "employee" && !isOffline) {
       fetchMe();
     }
-  }, [token, fetchMe]);
+  }, [token, isOffline, fetchMe]);
 
   // Listen to offline/online events
   useEffect(() => {
@@ -280,80 +331,84 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const handleOffline = () => {
       setIsOffline(true);
     };
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
     return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
     };
   }, []);
 
   // Fetch notifications
-  const fetchNotifications = useCallback(async () => {
-    const activeToken = localStorage.getItem('token') || token;
-    if (!activeToken || isOffline) return;
+const fetchNotifications = useCallback(async () => {
+  const activeToken = localStorage.getItem("token") || token;
+  if (!activeToken || isOffline) return;
 
-    try {
-      const res = await apiGet('/api/notifications');
-      const rawItems = res?.data?.items || res?.items || (Array.isArray(res?.data) ? res.data : []);
+  try {
+    const res = await apiGet("/api/notifications");
 
-      const items = rawItems.map((n: any) => ({
-        id: n.id,
-        title: n.title,
-        message: n.message,
-        type: n.type,
-        read: n.is_read,
-        timestamp: n.created_at ? new Date(n.created_at).toLocaleString() : '',
-      }));
-      setNotifications(items);
-    } catch (error) {
-      console.error("Error loading notifications", error);
+    const rawItems =
+      res?.data?.items ||
+      res?.items ||
+      (Array.isArray(res?.data) ? res.data : []);
 
-    }
-  }, [token, apiGet, isOffline]);
+    const items = rawItems.map((n: any) => ({
+      id: n.id,
+      title: n.title,
+      message: n.message,
+      type: n.type,
+      read: n.is_read,
+      timestamp: n.created_at
+        ? new Date(n.created_at).toLocaleString()
+        : "",
+    }));
 
-  const fetchUnreadCount = useCallback(async () => {
-    const activeToken = localStorage.getItem('token') || token;
-    if (!activeToken || isOffline) return;
+    setNotifications(items);
+  } catch (error) {
+    console.error("Error loading notifications:", error);
+  }
+}, [token, apiGet, isOffline]);
 
-    try {
-      const res = await apiGet('/api/notifications/unread-count');
-      const count = res?.data?.count ?? res?.count ?? 0;
-      setUnreadCount(count);
-    } catch (error) {
-      console.error(error);
-    }
-  }, [token, apiGet, isOffline]);
+ // Fetch unread notification count
+const fetchUnreadCount = useCallback(async () => {
+  const activeToken = localStorage.getItem("token") || token;
+  if (!activeToken || isOffline) return;
 
+  try {
+    const res = await apiGet("/api/notifications/unread-count");
+    const count = res?.data?.count ?? res?.count ?? 0;
+    setUnreadCount(count);
+  } catch (error) {
+    console.error("Error loading unread notification count:", error);
+  }
+}, [token, apiGet, isOffline]);
 
-  useEffect(() => {
-
-  if (!token) return;
+// Initial load + polling
+useEffect(() => {
+  if (!token || isOffline) return;
 
   fetchNotifications();
   fetchUnreadCount();
 
   const interval = setInterval(() => {
-
     fetchNotifications();
     fetchUnreadCount();
+  }, 7000);
 
-  },7000);
-
-  return ()=>clearInterval(interval);
-
-},[
-token,
-fetchNotifications,
-fetchUnreadCount
+  return () => clearInterval(interval);
+}, [
+  token,
+  isOffline,
+  fetchNotifications,
+  fetchUnreadCount,
 ]);
 
   // Theme is handled in ThemeContext
 
-  const setLanguage = (lang: 'en' | 'am') => {
+  const setLanguage = (lang: "en" | "am") => {
     setLangState(lang);
     i18n.changeLanguage(lang);
-    localStorage.setItem('esrom_lang', lang);
+    localStorage.setItem("esrom_lang", lang);
   };
 
 const login = async (employeeId: string, password: string): Promise<any> => {
@@ -371,16 +426,16 @@ const login = async (employeeId: string, password: string): Promise<any> => {
     localStorage.setItem('user', JSON.stringify(userData));
     if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
 
-    setToken(token);
-    setUser(userData);
+      setToken(token);
+      setUser(userData);
 
-    setGlobalLoading(false);
-    return res.data;
-  } catch (e) {
-    setGlobalLoading(false);
-    throw e;
-  }
-};
+      setGlobalLoading(false);
+      return res.data;
+    } catch (e) {
+      setGlobalLoading(false);
+      throw e;
+    }
+  };
 
   const logout = () => {
     localStorage.removeItem('token');
@@ -398,7 +453,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
       const existing = prev.find((i) => i.item.id === item.id);
       if (existing) {
         return prev.map((i) =>
-          i.item.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
+          i.item.id === item.id ? { ...i, quantity: i.quantity + 1 } : i,
         );
       }
       return [...prev, { item, quantity: 1 }];
@@ -415,7 +470,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
       return;
     }
     setCart((prev) =>
-      prev.map((i) => (i.item.id === itemId ? { ...i, quantity: qty } : i))
+      prev.map((i) => (i.item.id === itemId ? { ...i, quantity: qty } : i)),
     );
   };
 
@@ -435,40 +490,66 @@ const login = async (employeeId: string, password: string): Promise<any> => {
       setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
       setUnreadCount(0);
     } catch (e) {
-      console.error('Error marking read:', e);
+      console.error("Error marking read:", e);
     }
   };
 
   const addToOfflineQueue = (order: any) => {
+    setOfflineOrderResult(null);
     const queue = [...offlineQueue, order];
     setOfflineQueue(queue);
-    localStorage.setItem('esrom_offline_queue', JSON.stringify(queue));
+    localStorage.setItem("esrom_offline_queue", JSON.stringify(queue));
   };
 
-  // Sync waiter offline queue
-  const triggerSync = async () => {
-    if (offlineQueue.length === 0 || isOffline) return;
-    setGlobalLoading(true);
-    try {
-      await apiPost('/api/waiter/sync-orders', { orders: offlineQueue });
-      setOfflineQueue([]);
-      localStorage.setItem('esrom_offline_queue', '[]');
-      setGlobalLoading(false);
-      fetchNotifications();
-    } catch (e) {
-      console.error('Sync failed:', e);
-      setGlobalLoading(false);
-      throw e;
-    }
-  };
+  const clearOfflineOrderResult = () => setOfflineOrderResult(null);
 
+  
+        
+// Sync waiter offline queue
+const triggerSync = useCallback(async () => {
+  if (
+    offlineQueue.length === 0 ||
+    !token ||
+    syncInProgressRef.current
+  ) {
+    return;
+  }
+
+  syncInProgressRef.current = true;
+  setGlobalLoading(true);
+
+  try {
+    await apiPost("/api/waiter/sync-orders", {
+      orders: offlineQueue,
+    });
+
+    setOfflineQueue([]);
+    localStorage.setItem("esrom_offline_queue", "[]");
+
+    fetchNotifications();
+  } catch (e) {
+    console.error("Sync failed:", e);
+  } finally {
+    setGlobalLoading(false);
+    syncInProgressRef.current = false;
+  }
+}, [offlineQueue, token, apiPost, fetchNotifications]);
+        
   // Auto-sync when online restores
   useEffect(() => {
-    if (!isOffline && offlineQueue.length > 0 && token) {
+    if (offlineQueue.length > 0 && token) {
       triggerSync().catch(console.error);
     }
-  }, [isOffline, offlineQueue, token]);
+  }, [offlineQueue.length, token, triggerSync]);
+  useEffect(() => {
+    if (offlineQueue.length === 0 || !token) return;
 
+    const interval = setInterval(() => {
+      triggerSync().catch(console.error);
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [offlineQueue.length, token, triggerSync]);
   const refreshData = async () => {
     await fetchMe();
     await fetchNotifications();
@@ -484,6 +565,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
         language,
         cart,
         offlineQueue,
+        offlineOrderResult,
         isOffline,
         notifications,
         unreadCount,
@@ -504,6 +586,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
         markNotificationsAsRead,
         triggerSync,
         addToOfflineQueue,
+        clearOfflineOrderResult,
         setGlobalLoading,
         refreshData,
         apiGet,
@@ -523,7 +606,7 @@ const login = async (employeeId: string, password: string): Promise<any> => {
 export function useApp() {
   const context = useContext(AppContext);
   if (context === undefined) {
-    throw new Error('useApp must be used within an AppProvider');
+    throw new Error("useApp must be used within an AppProvider");
   }
   return context;
 }

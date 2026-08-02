@@ -31,7 +31,7 @@ function Layout() {
   return (
     <div className="flex h-screen bg-page overflow-hidden transition-colors duration-200">
       {/* Sidenav (Desktop & Mobile) */}
-      {user?.role !== 'waiter' && (
+      {user?.role !== "waiter" && (
         <Sidebar
           mobileOpen={mobileSidebarOpen}
           onClose={() => setMobileSidebarOpen(false)}
@@ -41,22 +41,29 @@ function Layout() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         {/* Mobile Floating Menu Button for Employee, Manager, and Cafe */}
-        {user && (user.role === 'employee' || user.role === 'manager' || user.role === 'cafe') && (
-          <button
-            onClick={() => setMobileSidebarOpen(true)}
-            className="md:hidden fixed top-4 left-4 z-30 p-2.5 rounded-xl bg-card text-text-primary shadow-md border border-border-default hover:bg-card-hover transition-all focus:outline-none min-h-[44px] min-w-[44px]"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-        )}
+        {user &&
+          (user.role === "employee" ||
+            user.role === "manager" ||
+            user.role === "cafe") && (
+            <button
+              onClick={() => setMobileSidebarOpen(true)}
+              className="md:hidden fixed top-4 left-4 z-30 p-2.5 rounded-xl bg-card text-text-primary shadow-md border border-border-default hover:bg-card-hover transition-all focus:outline-none min-h-[44px] min-w-[44px]"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+          )}
 
         {/* Top Header navbar (Hidden for employees, managers, and cafe) */}
-        {user?.role !== 'employee' && user?.role !== 'manager' && user?.role !== 'cafe' && (
-          <TopNav onMenuClick={() => setMobileSidebarOpen(true)} />
-        )}
+        {user?.role !== "employee" &&
+          user?.role !== "manager" &&
+          user?.role !== "cafe" && (
+            <TopNav onMenuClick={() => setMobileSidebarOpen(true)} />
+          )}
 
         {/* Dynamic page container */}
-        <main className={`flex-1 overflow-y-auto bg-page no-scrollbar focus:outline-none ${(user?.role === 'employee' || user?.role === 'manager' || user?.role === 'cafe') ? 'pt-16 md:pt-0' : ''}`}>
+        <main
+          className={`flex-1 overflow-y-auto bg-page no-scrollbar focus:outline-none ${user?.role === "employee" || user?.role === "manager" || user?.role === "cafe" ? "pt-16 md:pt-0" : ""}`}
+        >
           <Routes>
             <Route path="/manager/*" element={<ProtectedRoute allowedRole="manager"><ManagerPortal /></ProtectedRoute>} />
             <Route path="/cafe/*" element={<ProtectedRoute allowedRole="cafe"><CafePortal /></ProtectedRoute>} />
@@ -79,14 +86,17 @@ function NotFound() {
 
   const goHome = () => {
     if (!user) {
-      navigate('/login');
+      navigate("/login");
       return;
     }
-    const path = 
-      user.role === 'manager' ? '/manager/dashboard' :
-      user.role === 'cafe' ? '/cafe/dashboard' :
-      user.role === 'employee' ? '/employee/dashboard' :
-      '/waiter/panel';
+    const path =
+      user.role === "manager"
+        ? "/manager/dashboard"
+        : user.role === "cafe"
+          ? "/cafe/dashboard"
+          : user.role === "employee"
+            ? "/employee/dashboard"
+            : "/waiter/panel";
     navigate(path);
   };
 
@@ -96,8 +106,13 @@ function NotFound() {
         <AlertTriangle className="w-8 h-8" />
       </div>
       <div>
-        <h2 className="text-lg font-black text-primary tracking-tight">404 - Page Not Found</h2>
-        <p className="text-subtle-text mt-1 max-w-xs">The screen or directory path you are looking for does not exist or has been relocated.</p>
+        <h2 className="text-lg font-black text-primary tracking-tight">
+          404 - Page Not Found
+        </h2>
+        <p className="text-subtle-text mt-1 max-w-xs">
+          The screen or directory path you are looking for does not exist or has
+          been relocated.
+        </p>
       </div>
       <button
         onClick={goHome}
@@ -156,7 +171,7 @@ function LogoutModal() {
   const handleConfirm = () => {
     logout();
     setShowLogoutModal(false);
-    navigate('/login?loggedOut=true');
+    navigate("/login?loggedOut=true");
   };
 
   const handleCancel = () => {
@@ -165,7 +180,7 @@ function LogoutModal() {
 
   return (
     <div className="logout-overlay z-[9999]" onClick={handleCancel}>
-      <div 
+      <div
         className="logout-card w-full max-w-sm p-6 text-center space-y-4 animate-scaleIn m-4"
         onClick={(e) => e.stopPropagation()}
       >
@@ -180,7 +195,8 @@ function LogoutModal() {
             Log Out?
           </h3>
           <p className="text-xs text-text-subtle leading-relaxed">
-            Are you sure you want to log out of your session? Any unsaved changes will be lost.
+            Are you sure you want to log out of your session? Any unsaved
+            changes will be lost.
           </p>
         </div>
 

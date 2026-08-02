@@ -24,6 +24,8 @@ router.get("/menu", requireRole(ROLES.CAFE_MANAGER, ROLES.WAITER), listMenuItems
 
 router.use(requireRole(ROLES.CAFE_MANAGER));
 
+router.get("/orders", listCafeOrders);
+router.get("/menu", listMenuItems);
 router.post("/menu", uploadMenuImage.single("image"), addMenuItem);
 router.patch("/menu/:id", uploadMenuImage.single("image"), editMenuItem);
 router.delete("/menu/:id", removeMenuItem);
