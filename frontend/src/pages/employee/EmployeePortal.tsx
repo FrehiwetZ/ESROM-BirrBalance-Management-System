@@ -74,31 +74,28 @@ export default function EmployeePortal() {
 
   const loadEmployeeData = async () => {
     try {
-      if (activeCafe) {
-        const itemsData = await apiGet(
-          `/api/employee/cafes/${activeCafe.id}/menu`,
-        );
-        setMenuItems(itemsData.data.filter((i: any) => i.is_available));
+      if (activeCafe?.id) {
+        const itemsData = await apiGet(`/api/employee/cafes/${activeCafe.id}/menu`);
+        setMenuItems((itemsData.data || []).filter((i: any) => i.is_available));
       }
 
-      const ordersData = await apiGet("/api/employee/orders");
-      const orders = Array.isArray(ordersData.data?.items)
-        ? ordersData.data.items
-        : [];
-      setMyOrders(
-        orders.map((order: any) => ({
-          ...order,
-          items: (order.order_items || []).map((item: any) => ({
-            name:
-              item.menu_items?.name ||
-              item.item_name_snapshot ||
-              "Unknown item",
-            quantity: item.quantity,
-          })),
-          amount: Number(order.total_amount || 0),
-          date: order.created_at,
-        })),
-      );
+      const ordersData = await apiGet('/api/employee/orders');
+      setMyOrders((ordersData.data?.items || []).map((o: any) => ({
+        id: o.id,
+        status: o.status,
+        amount: Number(o.total_amount),
+        date: o.created_at,
+        cafeName: o.cafes?.name,
+        items: (o.order_items || []).map((i: any) => ({
+          itemId: i.menu_item_id,
+          name: i.item_name_snapshot || i.menu_items?.name,
+          quantity: i.quantity,
+          price: Number(i.unit_price_snapshot)
+        }))
+      })));
+
+      const profileData = await apiGet('/api/employee/profile');
+      setAllocationHistory(profileData.data?.allocations || []);
     } catch (e) {
       console.error("Error loading employee portal data", e);
     }
@@ -811,14 +808,13 @@ function EmployeePlaceOrder({
 
     setIsSubmitting(true);
     try {
-      const formattedItems = cart.map((c) => ({
-        menu_item_id: c.item.id,
-        quantity: c.quantity,
-      }));
-
-      const res = await apiPost("/api/employee/orders", {
-        cafe_id: activeCafe.id,
-        items: formattedItems,
+      const cafeId = cart[0]?.item.cafe_id;
+      const res = await apiPost('/api/employee/orders', {
+        cafe_id: cafeId,
+        items: cart.map(c => ({
+          menu_item_id: c.item.id,
+          quantity: c.quantity
+        }))
       });
 
       // Clear tray
@@ -828,7 +824,11 @@ function EmployeePlaceOrder({
       await refreshData();
       await onReload();
 
-      setSuccessOrder(res.data);
+      setSuccessOrder({
+        id: res.data?.orderUuid || res.data?.orderId,
+        amount: res.data?.totalAmount ?? total,
+        cafeId
+      });
 
       setToast({
         type: "success",
@@ -857,10 +857,10 @@ function EmployeePlaceOrder({
     if (!successOrder) return;
 
     try {
-      await apiPost("/api/employee/feedback", {
-        cafe_id: activeCafe.id,
+      await apiPost('/api/employee/feedback', {
+        cafe_id: successOrder.cafeId,
         rating,
-        comment: comment || "No additional comments",
+        comment: comment.trim() || 'No comment provided'
       });
       setFeedbackSent(true);
       setTimeout(() => {
@@ -1369,9 +1369,9 @@ function EmployeeProfilePage({
     }
 
     try {
-      await apiPut("/api/employees/me/update-password", {
-        oldPassword,
-        newPassword,
+      await apiPut('/api/employee/password', {
+        old_password: oldPassword,
+        new_password: newPassword
       });
 
       setPassSuccess("Password updated successfully!");
@@ -1405,7 +1405,7 @@ function EmployeeProfilePage({
         <div className="lg:col-span-5 space-y-6">
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm text-center flex flex-col items-center space-y-3">
             <div className="w-16 h-16 rounded-full bg-slate-100 border flex items-center justify-center font-black text-primary text-2xl uppercase shadow-sm">
-              {user.fullname.charAt(0)}
+              {user.fullName?.charAt(0) || "?"}
             </div>
             <div>
               <h3 className="text-base font-black text-primary">

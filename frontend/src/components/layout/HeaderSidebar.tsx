@@ -220,15 +220,11 @@ export function Sidebar({
       <div className="p-4 border-t border-border-default">
         <div className="flex items-center gap-3 xl:p-2 md:p-0 rounded-xl xl:bg-card-hover md:bg-transparent xl:border xl:border-border-default/40 md:border-none mb-3 xl:justify-start md:justify-center">
           <div className="w-9 h-9 rounded-full bg-brand-primary flex items-center justify-center font-bold text-white uppercase shadow flex-shrink-0">
-            {user.fullName.charAt(0)}
+            {user?.fullName?.charAt(0) || "?"}
           </div>
           <div className="flex-1 overflow-hidden xl:block md:hidden block">
-            <h4 className="text-xs font-bold text-text-primary truncate">
-              {user?.fullName}
-            </h4>
-            <p className="text-[10px] text-text-subtle capitalize truncate">
-              {user?.role}
-            </p>
+            <h4 className="text-xs font-bold text-text-primary truncate">{user?.fullName}</h4>
+            <p className="text-[10px] text-text-subtle capitalize truncate">{user?.role}</p>
           </div>
         </div>
 
@@ -586,7 +582,8 @@ export function TopNav({ onMenuClick }: { onMenuClick?: () => void }) {
                 className="flex items-center gap-2 p-1 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 transition-all min-h-[44px] cursor-pointer"
               >
                 <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center font-bold text-white uppercase shadow-inner flex-shrink-0">
-                  {user.fullName.charAt(0)}
+                  {user?.fullName?.charAt(0) || "?"}
+
                 </div>
                 <span className="hidden xl:inline text-xs font-bold text-text-primary max-w-[120px] truncate">
                   {user.fullName}
@@ -602,9 +599,7 @@ export function TopNav({ onMenuClick }: { onMenuClick?: () => void }) {
                 >
                   <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/60">
                     <p className="text-xs text-subtle-text">Logged in as</p>
-                    <h4 className="text-sm font-black text-dark-text dark:text-white truncate mt-0.5">
-                      {user.fullname}
-                    </h4>
+                    <h4 className="text-sm font-black text-dark-text dark:text-white truncate mt-0.5">{user.fullName}</h4>
                     <span className="inline-block mt-1 text-[10px] font-bold text-white bg-secondary px-2 py-0.5 rounded-full capitalize">
                       {user.role}
                     </span>

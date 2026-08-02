@@ -1,16 +1,9 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { useApp } from "../../context/AppContext";
-import { useTranslation } from "react-i18next";
-import {
-  Eye,
-  EyeOff,
-  ShieldAlert,
-  KeyRound,
-  UserSquare2,
-  Sparkles,
-} from "lucide-react";
-import { EsromLogo } from "../../components/layout/HeaderSidebar";
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { normalizeRole, useApp } from '../../context/AppContext';
+import { useTranslation } from 'react-i18next';
+import { Eye, EyeOff, ShieldAlert, KeyRound, UserSquare2, Sparkles } from 'lucide-react';
+import { EsromLogo } from '../../components/layout/HeaderSidebar';
 
 export default function Login() {
   const { login } = useApp();
@@ -46,7 +39,7 @@ export default function Login() {
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    const role = localStorage.getItem("role");
+    const role = normalizeRole(localStorage.getItem("role"));
     if (token && role) {
       if (role === "manager") navigate("/manager/dashboard");
       else if (role === "cafe") navigate("/cafe/dashboard");
@@ -56,35 +49,39 @@ export default function Login() {
   }, [navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!employeeId.trim() || !password.trim()) {
-      setErrorMsg("Employee ID and password are required.");
-      return;
-    }
+  e.preventDefault();
 
-    setErrorMsg("");
-    setLoading(true);
+  if (!employeeId.trim() || !password.trim()) {
+    setErrorMsg("Employee ID and password are required.");
+    return;
+  }
 
-    try {
-      await login(employeeId.toUpperCase(), password);
-      const role = localStorage.getItem("role");
-      if (role === "manager") navigate("/manager/dashboard");
-      else if (role === "cafe") navigate("/cafe/dashboard");
-      else if (role === "employee") navigate("/employee/dashboard");
-      else if (role === "waiter") navigate("/waiter/panel");
-      else navigate("/login");
-    } catch (err: any) {
-      // 1. Log the EXACT error to your browser console
-      console.error("ACTUAL LOGIN ERROR:", err);
+  setErrorMsg("");
+  setLoading(true);
 
-      // 2. Display the real error message to the screen (or fallback to a generic message)
-      setErrorMsg(err.message || "A network or server error occurred.");
-      setPassword("");
-    } finally {
-      setLoading(false);
-    }
-  };
+  try {
+    await login(employeeId.toUpperCase(), password);
 
+    // AppContext already stores token, role, and user
+    const role = normalizeRole(localStorage.getItem("role"));
+
+    if (role === "manager") navigate("/manager/dashboard");
+    else if (role === "cafe") navigate("/cafe/dashboard");
+    else if (role === "employee") navigate("/employee/dashboard");
+    else if (role === "waiter") navigate("/waiter/panel");
+    else navigate("/login");
+  } catch (err: any) {
+    // Keep this from eyob for debugging
+    console.error("ACTUAL LOGIN ERROR:", err);
+
+    // Show backend error if available
+    setErrorMsg(err.message || "Incorrect Employee ID or password. Please try again.");
+    setPassword("");
+  } finally {
+    setLoading(false);
+  }
+};
+  
   return (
     <div className="min-h-screen grid grid-cols-1 lg:grid-cols-12 bg-page-bg font-sans">
       {/* Left Column - Tech / Brand Panel (Desktop only) */}

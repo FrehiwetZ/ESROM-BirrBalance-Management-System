@@ -93,8 +93,8 @@ export default function WaiterPanel() {
   useEffect(() => {
     const loadMenu = async () => {
       try {
-        const res = await apiGet("/api/waiter/menu");
-        setMenuItems(res.data.filter((i: any) => i.is_available));
+        const res = await apiGet('/api/cafe/menu');
+        setMenuItems((res.data || []).filter((i: any) => i.is_available));
       } catch (err) {
         console.error(err);
       }
@@ -153,15 +153,33 @@ export default function WaiterPanel() {
     setLookupError("");
 
     try {
-      console.log("About to call /api/waiter/scan");
-      const res = await apiPost("/api/waiter/scan", { qr_token: qrToken });
-      console.log("Scan response:", res);
-      setScannedEmployee(res.data.employee);
-      setQrSessionId(res.data.qr_session_id);
-      setCafeId(res.data.cafe_id);
-      setCart([]);
-      setOfflineOrderQueued(false);
-      setStep("order");
+      const res = await apiPost('/api/waiter/scan', { qr_token: qrString });
+      if (res.data?.employee) {
+        setScannedEmployee({ ...res.data.employee, qrSessionId: res.data.qrSessionId });
+        setCart([]);
+        setStep('order');
+      } else {
+        setLookupError('Employee not found or invalid token.');
+      }
+    } catch (e: any) {
+      setLookupError(e.message || 'Error verifying encrypted QR token.');
+    }
+  };
+
+  // Query employee detail (manual ID fallback)
+  const handleLookupEmployee = async (empId: string) => {
+    if (!empId.trim()) return;
+    setLookupError('');
+
+    try {
+      const res = await apiPost('/api/waiter/lookup-employee', { employee_external_id: empId });
+      if (res.data?.employee) {
+        setScannedEmployee({ ...res.data.employee, qrSessionId: res.data.qrSessionId });
+        setCart([]);
+        setStep('order');
+      } else {
+        setLookupError('Employee ID not found in database.');
+      }
     } catch (e: any) {
       setLookupError(e.message || "Error verifying QR token.");
       setStep("scan");
@@ -210,17 +228,16 @@ export default function WaiterPanel() {
     setIsAuthorizing(true);
 
     try {
-      const formattedItems = cart.map((c) => ({
+      const formattedItems = cart.map(c => ({
         menu_item_id: c.item.id,
-        quantity: c.quantity,
+        quantity: c.quantity
       }));
 
-      const res = await apiPost("/api/waiter/order", {
+      const res = await apiPost('/api/waiter/order', {
         employee_id: scannedEmployee.id,
-        cafe_id: cafeId,
-        qr_session_id: qrSessionId,
-        password: employeePassword,
+        qr_session_id: scannedEmployee.qrSessionId,
         items: formattedItems,
+        password: waiterPassword
       });
 
       try {
@@ -237,11 +254,9 @@ export default function WaiterPanel() {
         console.log("Audio beep blocked or unsupported");
       }
 
-      setFinalTxId(res.data.order_id);
-      setFinalTotal(res.data.total_amount);
-      setFinalRemaining(res.data.remaining_balance);
-      setEmployeePassword("");
-      setStep("success");
+      setFinalTxId(res.data?.orderUuid || res.data?.orderId);
+      setWaiterPassword('');
+      setStep('success');
     } catch (e: any) {
       const isNetworkError = e.message === "Failed to fetch" || isOffline;
 
@@ -290,13 +305,8 @@ export default function WaiterPanel() {
       {/* Header banner */}
       <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-xl font-extrabold text-primary tracking-tight">
-            Waiter Sales Portal
-          </h1>
-          <p className="text-[10px] text-subtle-text font-medium uppercase tracking-wider mt-1">
-            Logged in: <strong>{user.fullName}</strong> &bull; Cashier Waiter
-            Mode
-          </p>
+          <h1 className="text-xl font-extrabold text-primary tracking-tight">Waiter Sales Portal</h1>
+          <p className="text-[10px] text-subtle-text font-medium uppercase tracking-wider mt-1">Logged in: <strong>{user.fullName}</strong> &bull; Cashier Waiter Mode</p>
         </div>
         {step !== "scan" && (
           <button
@@ -333,16 +343,43 @@ export default function WaiterPanel() {
               <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <span>{lookupError}</span>
             </div>
-          )}
 
-          <div className="bg-slate-50 rounded-3xl border border-slate-200 p-4 relative overflow-hidden flex flex-col items-center justify-center min-h-[300px]">
-            <div
-              id="qr-scanner-viewport"
-              className="w-full max-w-sm rounded-2xl overflow-hidden shadow-inner text-xs font-mono font-bold text-slate-500"
-            />
-            <div className="mt-4 flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-              <QrCode className="w-4 h-4 text-slate-300" />
-              <span>Camera scan state online</span>
+            {lookupError && (
+              <div className="p-3.5 bg-red-50 rounded-2xl border border-red-100 text-danger text-xs font-bold flex gap-2 items-start">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>{lookupError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleManualSearch} className="space-y-4 text-xs">
+              <div className="space-y-1.5">
+                <label className="font-bold text-slate-700">Enter Employee ID / Name</label>
+                <div className="relative flex items-center">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-4" />
+                  <input
+                    id="manual-id-input"
+                    type="text"
+                    required
+                    placeholder="e.g. EMP001"
+                    value={manualId}
+                    onChange={(e) => setManualId(e.target.value)}
+                    className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent text-xs font-bold uppercase tracking-wider"
+                  />
+                </div>
+              </div>
+
+              <button
+                id="manual-search-submit"
+                type="submit"
+                className="w-full py-4 bg-primary hover:bg-secondary text-white font-bold rounded-xl shadow-md transition-all uppercase text-[10px] tracking-wider min-h-[44px]"
+              >
+                Search Account
+              </button>
+            </form>
+
+            <div className="p-4 bg-blue-50/50 rounded-2xl text-xs text-slate-600 leading-relaxed border border-slate-100">
+              <h4 className="font-bold text-primary mb-1">Authorization Instructions</h4>
+              <p>Verify that the employee has a valid corporate badge. Once identified, select meals and have the employee enter their account password to authorize the debit.</p>
             </div>
           </div>
         </div>
@@ -494,15 +531,15 @@ export default function WaiterPanel() {
                     <div className="space-y-1.5">
                       <label className="font-bold text-slate-700 flex items-center gap-1">
                         <Lock className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Employee Password (for their approval) *</span>
+                        <span>Employee Account Password *</span>
                       </label>
                       <input
                         id="employee-auth-password"
                         type="password"
                         required
-                        placeholder="Have the employee type their password..."
-                        value={employeePassword}
-                        onChange={(e) => setEmployeePassword(e.target.value)}
+                        placeholder="Employee types password to authorize..."
+                        value={waiterPassword}
+                        onChange={(e) => setWaiterPassword(e.target.value)}
                         className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent"
                       />
                     </div>

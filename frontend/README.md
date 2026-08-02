@@ -1,3 +1,6 @@
+# ESROM BirrBalance — Frontend
+
+> For the full project overview (architecture, all portals, tech stack, data flows), see the [root README](../README.md).
 
 # Run and deploy your AI Studio app
 

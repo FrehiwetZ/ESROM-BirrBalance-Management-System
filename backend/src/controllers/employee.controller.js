@@ -9,7 +9,8 @@ import {
   getNotifications as listUserNotifications,
   markNotificationRead as markUserNotificationRead,
 } from "../services/notification.service.js";
-import { parsePagination, parseSort } from "../validators/common.validators.js";
+import { parsePagination, parseSort, requireString, validatePassword } from "../validators/common.validators.js";
+import { comparePassword, hashPassword } from "../services/auth.service.js";
 import { validateFeedbackCreate } from "../validators/employee.validators.js";
 import { AppError } from "../utils/AppError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -194,6 +195,44 @@ export const generateQR = asyncHandler(async (req, res) => {
     { qr_token: token, expires_at: expiresAt },
     "QR code generated successfully",
   );
+});
+
+export const changePassword = asyncHandler(async (req, res) => {
+  const oldPassword = requireString(req.body.old_password, "old_password", 100);
+  const newPassword = validatePassword(req.body.new_password, "new_password");
+
+  const user = await prisma.users.findUnique({
+    where: { id: req.user.id },
+    select: { password_hash: true },
+  });
+
+  const isPasswordValid = await comparePassword(oldPassword, user.password_hash);
+  if (!isPasswordValid) {
+    throw new AppError("Current password is incorrect", 401);
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.users.update({
+      where: { id: req.user.id },
+      data: { password_hash: passwordHash, updated_at: new Date() },
+    });
+
+    await writeAuditLog(
+      {
+        userId: req.user.id,
+        action: "employee.password.change",
+        entityType: "users",
+        entityId: req.user.id,
+        description: "Changed own password",
+        ipAddress: req.ip,
+      },
+      tx,
+    );
+  });
+
+  return successResponse(res, { changed: true }, "Password updated successfully");
 });
 
 export const createFeedback = async (req, res, next) => {

@@ -5,11 +5,10 @@ import {
   getProfile,
   getBalance,
   getOrders,
-  getNotifications,
-  markNotificationRead,
   generateQR,
   createOnlineOrder,
   createFeedback,
+  changePassword,
   listCafes,
 } from "../controllers/employee.controller.js";
 import { listPublicMenuItems } from "../controllers/cafe.controller.js";
@@ -25,9 +24,8 @@ router.get("/orders", getOrders);
 router.get("/cafes", listCafes);
 router.get("/cafes/:cafeId/menu", listPublicMenuItems);
 router.post("/orders", createOnlineOrder);
-router.get("/notifications", getNotifications);
-router.patch("/notifications/:id/read", markNotificationRead);
 router.post("/generate-qr", generateQR);
 router.post("/feedback", createFeedback);
+router.patch("/password", changePassword);
 
 export default router;

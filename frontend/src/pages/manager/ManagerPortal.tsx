@@ -26,18 +26,74 @@ import {
   Download,
   Send,
   MessageCircle,
-  Pencil
+  Pencil,
+  RefreshCw
 } from 'lucide-react';
 import {
   MiniSparklineChart,
   CouponActivityChart,
   BalanceStatusDonut
 } from '../../components/charts/DashboardCharts';
-import { exportToExcel, exportToCSV, exportToPDF, exportMonthlyReportToExcel } from '../../utils/exportHelpers';
+import { exportToExcel, getFileNameFromContentDisposition, downloadBlobFile } from '../../utils/exportHelpers';
 import { formatETB } from '../../utils/format';
 
+// ─── Data normalizers: convert backend snake_case → frontend camelCase ───────
+const normalizeEmployee = (e: any) => ({
+  id: e.id,
+  employeeId: e.employee_external_id ?? e.id,
+  fullName: e.fullname ?? e.fullName ?? '',
+  email: e.email ?? '',
+  phone: e.phone_number ?? '',
+  department: e.department?.name ?? e.department ?? '',
+  departmentId: e.department?.id ?? e.department_id ?? null,
+  isActive: e.is_active ?? true,
+  isAwaitingSetup: e.isAwaitingSetup ?? false,
+  balance: e.balance ?? 0,
+  balanceTier: e.balanceTier ?? '',
+  roles: e.roles ?? [],
+});
+
+const normalizeDepartment = (d: any) => ({
+  id: d.id,
+  name: d.name,
+  employeeCount: d.employeeCount ?? d.employee_count ?? 0,
+  totalAllocated: d.totalAllocated ?? d.total_allocated ?? 0,
+  totalRedeemed: d.totalRedeemed ?? d.total_redeemed ?? 0,
+});
+
+const normalizeOrder = (o: any) => ({
+  id: o.id,
+  employeeName: o.employeeName ?? o.employee_name ?? (o.employee?.fullname ?? ''),
+  employeeId: o.employeeId ?? o.employee_external_id ?? '',
+  department: o.department ?? (o.employee?.department?.name ?? ''),
+  date: o.date ?? o.created_at ?? '',
+  status: o.status ?? 'pending',
+  amount: Number(o.amount ?? o.total_amount ?? 0),
+  items: o.items ?? o.order_items ?? [],
+  waiterName: o.waiterName ?? (o.waiter?.fullname ?? 'Staff'),
+});
+
+const normalizeAuditLog = (l: any) => ({
+  id: l.id,
+  employeeId: l.users?.employee_external_id ?? l.user_id ?? '',
+  userName: l.users?.fullname ?? l.userName ?? 'System',
+  role: l.role ?? 'manager',
+  action: l.action ?? '',
+  details: l.description ?? l.details ?? '',
+  timestamp: l.created_at ?? l.timestamp ?? new Date().toISOString(),
+});
+
+const normalizeFeedback = (f: any) => ({
+  id: f.id,
+  employeeName: f.users?.fullname ?? f.employeeName ?? 'Unknown',
+  orderId: f.order_id ?? f.orderId ?? '',
+  rating: f.rating ?? 0,
+  comment: f.comment ?? '',
+  date: f.created_at ? new Date(f.created_at).toLocaleDateString() : (f.date ?? ''),
+});
+
 export default function ManagerPortal() {
-  const { user, apiGet, apiPost, apiPut, apiDelete, setGlobalLoading } = useApp();
+  const { user, apiGet, apiPost, apiPut, apiPatch, apiDelete, setGlobalLoading } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
@@ -66,36 +122,84 @@ export default function ManagerPortal() {
   const [conversations, setConversations] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
   const [waitersList, setWaitersList] = useState<any[]>([]);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [portalError, setPortalError] = useState<string | null>(null);
+  // Financial report data for the chart
+  const [financialData, setFinancialData] = useState<any>(null);
 
-  // Reload portal data
+  // Reload portal data — calls correct backend endpoints and normalizes response shapes
   const loadPortalData = async () => {
+    setPortalLoading(true);
+    setPortalError(null);
     try {
-      const emps = await apiGet('/api/employees');
-      setEmployeesList(emps.employees);
-      
-      const depts = await apiGet('/api/departments');
-      setDepartmentsList(depts.departments);
+      // Employees: GET /api/company-manager/employees → { success, data: { items, total, ... } }
+      const empsRes = await apiGet('/api/company-manager/employees?limit=500');
+      const rawEmps = empsRes?.data?.items ?? empsRes?.items ?? [];
+      setEmployeesList(rawEmps.map(normalizeEmployee));
 
-      const ords = await apiGet('/api/orders');
-      setRecentOrders(ords.orders);
+      // Departments: GET /api/company-manager/departments → { success, data: [...] }
+      const deptsRes = await apiGet('/api/company-manager/departments');
+      const rawDepts = deptsRes?.data ?? deptsRes?.departments ?? [];
+      setDepartmentsList((Array.isArray(rawDepts) ? rawDepts : []).map(normalizeDepartment));
 
-      const logs = await apiGet('/api/audit-logs');
-      setAuditLogs(logs.auditLogs);
+      // Audit Logs: GET /api/audit-logs → { success, data: { items, total, ... } }
+      const logsRes = await apiGet('/api/audit-logs?limit=50');
+      const rawLogs = logsRes?.data?.items ?? logsRes?.items ?? [];
+      setAuditLogs(rawLogs.map(normalizeAuditLog));
 
-      const feeds = await apiGet('/api/feedback');
-      setFeedbacks(feeds.feedback);
+      // Feedback: GET /api/company-manager/feedback → { success, data: { items, ... } }
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      const feedsRes = await apiGet(`/api/company-manager/feedback?month=${currentMonth}&limit=100`);
+      const rawFeeds = feedsRes?.data?.items ?? feedsRes?.items ?? [];
+      setFeedbacks(rawFeeds.map(normalizeFeedback));
 
-      const chats = await apiGet('/api/messages');
-      setConversations(chats.conversations);
-      setMessages(chats.messages);
+      // Financial report for chart data (current month, json format)
+      try {
+        const finRes = await apiGet(`/api/company-manager/reports/financial?month=${currentMonth}&format=json`);
+        setFinancialData(finRes?.data ?? null);
+      } catch {
+        setFinancialData(null);
+      }
 
-      const waiters = await apiGet('/api/waiters');
-      setWaitersList(waiters.waiters);
-    } catch (e) {
+      // Monthly report rows for the Reports page
+      try {
+        const monthlyRes = await apiGet(`/api/company-manager/reports/monthly?month=${currentMonth}&format=json`);
+        const rawOrders = monthlyRes?.data?.rows ?? [];
+        // Normalize monthly report rows as orders for the stream table
+        const mappedOrders = rawOrders.map((row: any, idx: number) => ({
+          id: idx,
+          employeeName: row.employee_name ?? '',
+          employeeId: row.employee_id ?? '',
+          department: row.department ?? '',
+          date: row.date ?? '',
+          status: 'confirmed',
+          amount: Number(row.total_amount_used ?? 0),
+          items: row.food_ordered ? [{ name: row.food_ordered, quantity: 1 }] : [],
+          waiterName: row.waiter_name ?? 'Staff',
+          remainingBalance: Number(row.remaining_balance ?? 0),
+        }));
+        setRecentOrders(mappedOrders);
+      } catch {
+        setRecentOrders([]);
+      }
+
+      // Messages (no messages API in backend — keep empty for now)
+      setConversations([]);
+      setMessages([]);
+      // Waiters list from employees with waiter role
+      setWaitersList(
+        rawEmps
+          .map(normalizeEmployee)
+          .filter((e: any) => (e.roles || []).includes('waiter'))
+      );
+    } catch (e: any) {
+
       console.error('Error loading manager data', e);
+      setPortalError(e.message || 'Failed to load dashboard data. Please try again.');
+    } finally {
+      setPortalLoading(false);
     }
   };
-
   useEffect(() => {
     if (user && user.role === 'manager') {
       loadPortalData();
@@ -104,8 +208,33 @@ export default function ManagerPortal() {
 
   if (!user || user.role !== 'manager') return null;
 
+  // Global loading splash (only on initial load, not refreshes)
+  if (portalLoading && employeesList.length === 0 && activeTab === 'overview') {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center min-h-[60vh] space-y-4">
+        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        <p className="text-xs font-bold text-subtle-text uppercase tracking-widest animate-pulse">Loading Dashboard...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 md:py-10 space-y-8 font-sans">
+      {/* Error Banner */}
+      {portalError && (
+        <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-2xl text-xs font-bold text-danger">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+          <span className="flex-1">{portalError}</span>
+          <button
+            onClick={loadPortalData}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-danger text-white rounded-lg hover:bg-red-600 transition-all text-[10px] uppercase tracking-wider"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Dynamic Render based on Tab */}
       {activeTab === 'overview' && (
         <ManagerDashboardOverview
@@ -113,6 +242,9 @@ export default function ManagerPortal() {
           departmentsList={departmentsList}
           recentOrders={recentOrders}
           auditLogs={auditLogs}
+          financialData={financialData}
+          isLoading={portalLoading}
+          onRefresh={loadPortalData}
         />
       )}
       {activeTab === 'employees' && (
@@ -122,6 +254,7 @@ export default function ManagerPortal() {
           onReload={loadPortalData}
           apiPost={apiPost}
           apiPut={apiPut}
+          apiPatch={apiPatch}
           apiDelete={apiDelete}
         />
       )}
@@ -160,14 +293,20 @@ export default function ManagerPortal() {
         />
       )}
       {activeTab === 'messages' && (
-        <ManagerMessagesPage
-          conversations={conversations}
-          messages={messages}
-          apiPost={apiPost}
-          onReload={loadPortalData}
-          employeesList={employeesList}
-        />
-      )}
+  <>
+    <ManagerMessagesPage
+      conversations={conversations}
+      messages={messages}
+      apiPost={apiPost}
+      onReload={loadPortalData}
+      employeesList={employeesList}
+    />
+
+    {/* Messages UI reuses notifications API for outbound alerts */}
+
+  </>
+
+)}
     </div>
   );
 }
@@ -179,36 +318,52 @@ function ManagerDashboardOverview({
   employeesList,
   departmentsList,
   recentOrders,
-  auditLogs
+  auditLogs,
+  financialData,
+  isLoading,
+  onRefresh
 }: {
   employeesList: any[];
   departmentsList: any[];
   recentOrders: any[];
   auditLogs: any[];
+  financialData: any;
+  isLoading: boolean;
+  onRefresh: () => void;
 }) {
   const { t } = useTranslation();
   
-  // Stats
+  // Stats derived from real backend data
   const totalEmployees = employeesList.length;
-  const activeEmployeesCount = employeesList.filter(e => e.isActive).length;
-  const expiredEmployeesCount = employeesList.filter(e => !e.isActive).length;
+  const activeEmployeesCount = employeesList.filter(e => e.isActive !== false).length;
+  const expiredEmployeesCount = employeesList.filter(e => e.isActive === false).length;
 
-  const totalDistributed = departmentsList.reduce((sum, d) => sum + d.totalAllocated, 0);
-  const totalRedeemed = departmentsList.reduce((sum, d) => sum + d.totalRedeemed, 0);
-  const attentionCount = employeesList.filter(e => !e.isActive || e.isAwaitingSetup).length;
+  // Financial totals: from financial report or fallback to order sums
+  const totalDistributed = financialData?.total_company_obligation
+    ?? recentOrders.reduce((sum: number, o: any) => sum + Number(o.amount || 0), 0);
+  const totalRedeemed = financialData?.cafe_spending
+    ? financialData.cafe_spending.reduce((sum: number, c: any) => sum + Number(c.total_amount || 0), 0)
+    : recentOrders.reduce((sum: number, o: any) => sum + Number(o.amount || 0), 0);
+  const attentionCount = employeesList.filter(e => e.isActive === false || e.isAwaitingSetup).length;
+
+  // Build chart data from financial report department spending
+  const chartData = (() => {
+    if (financialData?.department_spending && financialData.department_spending.length > 0) {
+      return financialData.department_spending.slice(0, 7).map((d: any) => ({
+        name: (d.department_name || 'Dept').slice(0, 8),
+        Allocated: Number(d.total_amount || 0) * 1.2,
+        Redeemed: Number(d.total_amount || 0),
+      }));
+    }
+    return null; // will use chart defaults
+  })();
 
   // Handle excel downloads
   const handleExportActivity = () => {
-    const activityData = [
-      { Day: 'Mon', Allocated: 12000, Redeemed: 8500 },
-      { Day: 'Tue', Allocated: 15000, Redeemed: 11200 },
-      { Day: 'Wed', Allocated: 14500, Redeemed: 12100 },
-      { Day: 'Thu', Allocated: 18000, Redeemed: 14500 },
-      { Day: 'Fri', Allocated: 20000, Redeemed: 16800 },
-      { Day: 'Sat', Allocated: 8000, Redeemed: 5200 },
-      { Day: 'Sun', Allocated: 5000, Redeemed: 3100 },
+    const activityData = chartData ?? [
+      { Day: 'Mon', Allocated: 0, Redeemed: 0 },
     ];
-    exportToExcel(activityData, 'Allocation_Redemption_Activity', 'Weekly Metrics');
+    exportToExcel(activityData, 'Allocation_Redemption_Activity', 'Monthly Metrics');
   };
 
   return (
@@ -217,22 +372,34 @@ function ManagerDashboardOverview({
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-2xl font-extrabold text-primary tracking-tight">Overview Dashboard</h1>
-          <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Real-time lunch balances & Birr redemption trends</p>
+          <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Real-time lunch balances &amp; Birr redemption trends</p>
         </div>
+        <button
+          onClick={onRefresh}
+          disabled={isLoading}
+          className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+          <span>{isLoading ? 'Refreshing...' : 'Refresh'}</span>
+        </button>
       </div>
 
-      {/* Stat Cards Grid (Fitshop Style with inline mini bar charts / sparks) */}
+      {/* Stat Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         {/* Total Employees */}
         <div className="stat-card-1 rounded-2xl p-6 flex items-center justify-between">
           <div className="space-y-2">
             <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">{t('manager.totalEmployees')}</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-black text-text-primary">{totalEmployees}</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-badge-bg text-text-sidebar-active dark:bg-brand-primary/20 dark:text-brand-secondary dark:shadow-[0_0_8px_rgba(59,130,246,0.2)]">+12%</span>
+              {isLoading ? (
+                <div className="h-8 w-16 bg-slate-200 animate-pulse rounded-lg" />
+              ) : (
+                <span className="text-3xl font-black text-text-primary">{totalEmployees}</span>
+              )}
             </div>
+            <p className="text-[10px] text-subtle-text">{activeEmployeesCount} active · {expiredEmployeesCount} inactive</p>
           </div>
-          <MiniSparklineChart data={[10, 11, 11, 12, 12, 13, 14]} type="bar" color="#1E3A8A" />
+          <MiniSparklineChart data={[Math.max(1, totalEmployees - 6), Math.max(1, totalEmployees - 4), Math.max(1, totalEmployees - 3), Math.max(1, totalEmployees - 2), Math.max(1, totalEmployees - 1), totalEmployees || 1, totalEmployees || 1]} type="bar" color="#1E3A8A" />
         </div>
 
         {/* Distributed Balance */}
@@ -240,8 +407,14 @@ function ManagerDashboardOverview({
           <div className="space-y-2">
             <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">Distributed This Month</p>
             <div className="flex items-baseline gap-1">
-              <span className="text-[10px] font-bold text-text-subtle">ETB</span>
-              <span className="text-2xl font-black text-text-primary">{totalDistributed.toLocaleString()}</span>
+              {isLoading ? (
+                <div className="h-7 w-28 bg-slate-200 animate-pulse rounded-lg" />
+              ) : (
+                <>
+                  <span className="text-[10px] font-bold text-text-subtle">ETB</span>
+                  <span className="text-2xl font-black text-text-primary">{Number(totalDistributed).toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                </>
+              )}
             </div>
           </div>
           <MiniSparklineChart data={[40, 42, 45, 52, 58, 60]} color="#8B5CF6" />
@@ -252,8 +425,14 @@ function ManagerDashboardOverview({
           <div className="space-y-2">
             <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">Redeemed This Month</p>
             <div className="flex items-baseline gap-1">
-              <span className="text-[10px] font-bold text-text-subtle">ETB</span>
-              <span className="text-2xl font-black text-text-primary">{totalRedeemed.toLocaleString()}</span>
+              {isLoading ? (
+                <div className="h-7 w-28 bg-slate-200 animate-pulse rounded-lg" />
+              ) : (
+                <>
+                  <span className="text-[10px] font-bold text-text-subtle">ETB</span>
+                  <span className="text-2xl font-black text-text-primary">{Number(totalRedeemed).toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                </>
+              )}
             </div>
           </div>
           <MiniSparklineChart data={[30, 31, 35, 38, 41, 42]} color="#06B6D4" />
@@ -264,7 +443,11 @@ function ManagerDashboardOverview({
           <div className="space-y-2">
             <p className="text-xs font-bold text-text-subtle uppercase tracking-wider">{t('manager.needingAttention')}</p>
             <div className="flex items-center gap-2">
-              <span className="text-3xl font-black text-text-primary">{attentionCount}</span>
+              {isLoading ? (
+                <div className="h-8 w-10 bg-slate-200 animate-pulse rounded-lg" />
+              ) : (
+                <span className="text-3xl font-black text-text-primary">{attentionCount}</span>
+              )}
               <AlertTriangle className="w-5 h-5 text-warning" />
             </div>
           </div>
@@ -272,23 +455,29 @@ function ManagerDashboardOverview({
         </div>
       </div>
 
-      {/* Charts Block (Grouped Bar Chart & Donut Chart side by side) */}
+      {/* Charts Block */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Allocation vs Redemption grouped bars */}
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 lg:col-span-2 space-y-6">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
               <h3 className="text-sm font-black text-primary tracking-tight">{t('manager.allocationRedemptionChart')}</h3>
-              <p className="text-[10px] text-subtle-text font-medium mt-0.5">Comparing financial commitments vs actual cafeteria consumption</p>
+              <p className="text-[10px] text-subtle-text font-medium mt-0.5">
+                {financialData ? 'Dept spending vs estimated allocation — current month' : 'Comparing financial commitments vs actual cafeteria consumption'}
+              </p>
             </div>
             <div className="flex items-center gap-1.5 bg-slate-50 p-1 rounded-xl">
-              <button className="text-[10px] font-bold px-2.5 py-1.5 rounded-lg bg-primary text-white shadow-sm">Day</button>
-              <button className="text-[10px] font-bold px-2.5 py-1.5 rounded-lg text-subtle-text hover:text-dark-text">Week</button>
-              <button className="text-[10px] font-bold px-2.5 py-1.5 rounded-lg text-subtle-text hover:text-dark-text">Month</button>
+              <button className="text-[10px] font-bold px-2.5 py-1.5 rounded-lg bg-primary text-white shadow-sm">Dept</button>
             </div>
           </div>
 
-          <CouponActivityChart period="day" />
+          {isLoading ? (
+            <div className="h-48 md:h-64 bg-slate-50 animate-pulse rounded-2xl flex items-center justify-center">
+              <p className="text-xs text-subtle-text font-medium">Loading chart data...</p>
+            </div>
+          ) : (
+            <CouponActivityChart period="day" data={chartData ?? undefined} />
+          )}
 
           <div className="pt-2 border-t border-slate-100 flex justify-end">
             <button
@@ -306,10 +495,16 @@ function ManagerDashboardOverview({
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 space-y-6 flex flex-col justify-between">
           <div>
             <h3 className="text-sm font-black text-primary tracking-tight">{t('manager.balanceAllocationChart')}</h3>
-            <p className="text-[10px] text-subtle-text font-medium mt-0.5">Proportion of active users vs expired allocations</p>
+            <p className="text-[10px] text-subtle-text font-medium mt-0.5">Proportion of active users vs inactive accounts</p>
           </div>
           
-          <BalanceStatusDonut activeCount={activeEmployeesCount} expiredCount={expiredEmployeesCount} />
+          {isLoading ? (
+            <div className="h-48 md:h-64 bg-slate-50 animate-pulse rounded-2xl flex items-center justify-center">
+              <p className="text-xs text-subtle-text">Loading...</p>
+            </div>
+          ) : (
+            <BalanceStatusDonut activeCount={activeEmployeesCount} expiredCount={expiredEmployeesCount} />
+          )}
           
           <div className="pt-4 border-t border-slate-100 space-y-2 text-xs">
             <div className="flex justify-between items-center text-slate-600">
@@ -331,52 +526,60 @@ function ManagerDashboardOverview({
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-black text-primary tracking-tight">{t('manager.recentRedemptions')}</h3>
-              <p className="text-[10px] text-subtle-text font-medium mt-0.5">Live real-time ledger of meal transaction requests</p>
+              <p className="text-[10px] text-subtle-text font-medium mt-0.5">Meal transactions from the current month's report</p>
             </div>
           </div>
 
-          <div className="table-container relative -mx-6">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-100 text-[10px] font-bold text-subtle-text uppercase tracking-wider bg-slate-50/50">
-                  <th className="py-3 px-6">Employee Name</th>
-                  <th className="py-3 px-3">Café</th>
-                  <th className="py-3 px-3">Date</th>
-                  <th className="py-3 px-3">State</th>
-                  <th className="py-3 px-6 text-right">Debit Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
-                {recentOrders.slice(0, 4).map((order) => (
-                  <tr key={order.id} className="hover:bg-slate-50/40 transition-colors">
-                    <td className="py-3 px-6 flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-slate-100 text-primary font-bold flex items-center justify-center uppercase">
-                        {order.employeeName.charAt(0)}
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-primary">{order.employeeName}</h4>
-                        <span className="text-[10px] text-slate-400 font-mono">{order.employeeId} &bull; {order.department}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-3 text-slate-600">Main Cafeteria</td>
-                    <td className="py-3 px-3 text-slate-600">
-                      {new Date(order.date).toLocaleDateString()}
-                    </td>
-                    <td className="py-3 px-3">
-                      <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                        order.status === 'confirmed' ? 'bg-green-50 text-success' : 'bg-amber-50 text-warning'
-                      }`}>
-                        {order.status}
-                      </span>
-                    </td>
-                    <td className="py-3 px-6 text-right font-bold text-danger">
-                      -{formatETB(order.amount)}
-                    </td>
+          {isLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} className="h-12 bg-slate-50 animate-pulse rounded-xl" />
+              ))}
+            </div>
+          ) : recentOrders.length === 0 ? (
+            <div className="py-12 flex flex-col items-center text-center space-y-3">
+              <ClipboardList className="w-10 h-10 text-slate-300" />
+              <p className="text-xs font-bold text-primary">No meal transactions this month</p>
+              <p className="text-[10px] text-subtle-text max-w-xs">Transactions will appear here once employees place meal orders.</p>
+            </div>
+          ) : (
+            <div className="table-container relative -mx-6">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-100 text-[10px] font-bold text-subtle-text uppercase tracking-wider bg-slate-50/50">
+                    <th className="py-3 px-6">Employee Name</th>
+                    <th className="py-3 px-3">Dept</th>
+                    <th className="py-3 px-3">Date</th>
+                    <th className="py-3 px-3">Waiter</th>
+                    <th className="py-3 px-6 text-right">Amount Used</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs">
+                  {recentOrders.slice(0, 4).map((order, idx) => (
+                    <tr key={order.id ?? idx} className="hover:bg-slate-50/40 transition-colors">
+                      <td className="py-3 px-6 flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-slate-100 text-primary font-bold flex items-center justify-center uppercase">
+                          {(order.employeeName || '?').charAt(0)}
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-primary">{order.employeeName}</h4>
+                          <span className="text-[10px] text-slate-400 font-mono">{order.employeeId}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-slate-600">{order.department || '—'}</td>
+                      <td className="py-3 px-3 text-slate-600">
+                        {order.date ? new Date(order.date).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="py-3 px-3 text-slate-500">{order.waiterName || 'Staff'}</td>
+                      <td className="py-3 px-6 text-right font-bold text-danger">
+                        -{formatETB(order.amount)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Activity Feed */}
@@ -386,20 +589,35 @@ function ManagerDashboardOverview({
             <p className="text-[10px] text-subtle-text font-medium mt-0.5">Logs of administrative changes and updates</p>
           </div>
 
-          <div className="space-y-4">
-            {auditLogs.slice(0, 3).map((log) => (
-              <div key={log.id} className="flex gap-3 items-start p-2 hover:bg-slate-50 rounded-xl transition-all">
-                <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-600 text-xs uppercase flex-shrink-0">
-                  {log.userName.charAt(0)}
+          {isLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-14 bg-slate-50 animate-pulse rounded-xl" />
+              ))}
+            </div>
+          ) : auditLogs.length === 0 ? (
+            <div className="py-8 flex flex-col items-center text-center space-y-2">
+              <ClipboardList className="w-8 h-8 text-slate-300" />
+              <p className="text-xs text-subtle-text font-medium">No system activity yet</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {auditLogs.slice(0, 5).map((log) => (
+                <div key={log.id} className="flex gap-3 items-start p-2 hover:bg-slate-50 rounded-xl transition-all">
+                  <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-600 text-xs uppercase flex-shrink-0">
+                    {(log.userName || '?').charAt(0)}
+                  </div>
+                  <div className="flex-1 space-y-0.5">
+                    <h4 className="text-xs font-bold text-primary leading-tight">{log.userName}</h4>
+                    <p className="text-[11px] text-slate-600 leading-snug">{log.details || log.action}</p>
+                    <span className="text-[9px] text-slate-400 block">
+                      {log.timestamp ? new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ''}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex-1 space-y-0.5">
-                  <h4 className="text-xs font-bold text-primary leading-tight">{log.userName}</h4>
-                  <p className="text-[11px] text-slate-600 leading-snug">{log.details}</p>
-                  <span className="text-[9px] text-slate-400 block">{new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -414,6 +632,7 @@ function ManagerEmployeesPage({
   departmentsList,
   onReload,
   apiPost,
+  apiPatch,
   apiPut,
   apiDelete
 }: {
@@ -421,6 +640,7 @@ function ManagerEmployeesPage({
   departmentsList: any[];
   onReload: () => Promise<void>;
   apiPost: (path: string, body: any) => Promise<any>;
+  apiPatch: (path: string, body: any) => Promise<any>;
   apiPut: (path: string, body: any) => Promise<any>;
   apiDelete: (path: string) => Promise<any>;
 }) {
@@ -433,6 +653,7 @@ function ManagerEmployeesPage({
   const [newEmpId, setNewEmpId] = useState('');
   const [newFullName, setNewFullName] = useState('');
   const [newDepartment, setNewDepartment] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newTier, setNewTier] = useState('Tier 1');
@@ -458,22 +679,25 @@ function ManagerEmployeesPage({
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEmpId.trim() || !newFullName.trim() || !newDepartment || !newEmail.trim()) {
+    if (!newEmpId.trim() || !newFullName.trim() || !newDepartment || !newEmail.trim() || !newPassword.trim()) {
       setFormError('All fields with * are required.');
       return;
     }
 
     try {
-      await apiPost('/api/employees', {
-        employeeId: newEmpId,
-        fullName: newFullName,
-        department: newDepartment,
-        phone: newPhone,
+      // POST /api/company-manager/employees with snake_case fields
+      await apiPost('/api/company-manager/employees', {
+        employee_external_id: newEmpId,
+        fullname: newFullName,
+        department_id: Number(newDepartment) || undefined,
+        phone_number: newPhone,
         email: newEmail,
-        balanceTier: newTier,
+        password: `Esrom@${new Date().getFullYear()}!`, // temporary default password
+        roles: ['employee'],
       });
 
       // Clear form
+      setNewPassword('');
       setNewEmpId('');
       setNewFullName('');
       setNewDepartment('');
@@ -490,7 +714,8 @@ function ManagerEmployeesPage({
 
   const handleDeactivate = async (emp: any) => {
     try {
-      await apiPut(`/api/employees/${emp.id}`, { isActive: !emp.isActive });
+      const action = emp.isActive ? 'deactivate' : 'activate';
+      await apiPatch(`/api/company-manager/employees/${emp.id}/${action}`, {});
       onReload();
     } catch (e) {
       console.error(e);
@@ -505,7 +730,7 @@ function ManagerEmployeesPage({
     }
 
     try {
-      await apiDelete(`/api/employees/${deleteEmp.id}`);
+      await apiDelete(`/api/company-manager/employees/${deleteEmp.id}`);
       setDeleteEmp(null);
       setDeleteTypedConfirm('');
       onReload();
@@ -518,7 +743,11 @@ function ManagerEmployeesPage({
     if (!resetQrEmp) return;
     setIsResettingQr(true);
     try {
-      await apiPost(`/api/employees/${resetQrEmp.id}/reset-qr`, {});
+      // Reset password instead of QR (no QR reset endpoint exists; password-reset is closest)
+      await apiPost(`/api/company-manager/employees/password-reset`, {
+        user_id: resetQrEmp.id,
+        new_password: `Esrom@${new Date().getFullYear()}!`
+      });
       setResetQrEmp(null);
       onReload();
     } catch (e) {
@@ -575,7 +804,7 @@ function ManagerEmployeesPage({
             placeholder="Search by name or ID..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent text-xs dark:text-white"
+            className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent text-xs text-slate-900 dark:text-slate-900"
           />
         </div>
       </div>
@@ -742,7 +971,7 @@ function ManagerEmployeesPage({
                 >
                   <option value="">Select Department</option>
                   {departmentsList.map((d) => (
-                    <option key={d.id} value={d.name}>{d.name}</option>
+                    <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </select>
               </div>
@@ -770,6 +999,18 @@ function ManagerEmployeesPage({
                     onChange={(e) => setNewPhone(e.target.value)}
                     className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent"
                   />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700">Temporary Password *</label>
+                    <input
+                      id="add-emp-password"
+                      type="text"
+                      required
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent"
+                      placeholder="e.g. ChangeMe123!"
+                    />
                 </div>
               </div>
 
@@ -923,7 +1164,7 @@ function ManagerDepartmentsPage({
     if (!newDeptName.trim()) return;
 
     try {
-      await apiPost('/api/departments', { name: newDeptName });
+      await apiPost('/api/company-manager/departments', { name: newDeptName });
       setNewDeptName('');
       setShowAddDept(false);
       setErrorMsg('');
@@ -1114,6 +1355,10 @@ function ManagerBalancePage({
   const [option, setOption] = useState<'department' | 'employee'>('department');
   const [targetId, setTargetId] = useState('');
   const [amount, setAmount] = useState('');
+  const [month, setMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [successAllocMsg, setSuccessAllocMsg] = useState('');
 
@@ -1139,30 +1384,53 @@ function ManagerBalancePage({
     return count * Number(amount || 0);
   };
 
-  const handleAllocate = async () => {
-    if (!amount || !targetId) return;
+ const handleAllocate = async () => {
+  if (!amount || !targetId || !month) return;
+  try {
+    let successCount = 0;
+    let failCount = 0;
 
-    try {
-      const res = await apiPost('/api/balance/allocate', {
-        option,
-        targetId,
-        amount: Number(amount)
+    if (option === 'employee') {
+      await apiPost('/api/company-manager/balances/allocations', {
+        user_id: Number(targetId),
+        amount: Number(amount),
+        month,
       });
-
-      setSuccessAllocMsg(`Allocated ${formatETB(Number(amount))} successfully to ${res.affectedCount} employees!`);
-      setShowWarningModal(false);
-      setAmount('');
-      setTargetId('');
-      setSearchEmp('');
-      onReload();
-
-      setTimeout(() => {
-        setSuccessAllocMsg('');
-      }, 5000);
-    } catch (e: any) {
-      alert(e.message || 'Error allocating balance');
+      successCount = 1;
+    } else {
+      // Department: backend only supports one employee per call, so loop
+      const targets = employeesList.filter((e) => e.department === targetId && e.isActive);
+      for (const emp of targets) {
+        try {
+          await apiPost('/api/company-manager/balances/allocations', {
+            user_id: Number(emp.id),
+            amount: Number(amount),
+            month,
+          });
+          successCount++;
+        } catch (e) {
+          failCount++;
+        }
+      }
     }
-  };
+
+    if (failCount > 0) {
+      setSuccessAllocMsg(`Allocated to ${successCount} employees, ${failCount} failed (likely already allocated for this month).`);
+    } else {
+      setSuccessAllocMsg(`Allocated ${formatETB(Number(amount))} successfully to ${successCount} employee(s)!`);
+    }
+    setShowWarningModal(false);
+    setAmount('');
+    setTargetId('');
+    setSearchEmp('');
+    onReload();
+    setTimeout(() => {
+      setSuccessAllocMsg('');
+    }, 5000);
+  } catch (e: any) {
+    alert(e.message || 'Error allocating balance');
+  }
+};
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -1223,7 +1491,7 @@ function ManagerBalancePage({
                 >
                   <option value="">-- Choose Department --</option>
                   {departmentsList.map((d) => (
-                    <option key={d.id} value={d.name}>{d.name}</option>
+                    <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </select>
               </div>
@@ -1273,6 +1541,17 @@ function ManagerBalancePage({
                 placeholder="e.g. 1500"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent font-bold"
+              />
+            </div>
+             {/* Month */}
+            <div className="space-y-1.5">
+              <label className="font-bold text-slate-700">Allocation Month</label>
+              <input
+                id="alloc-month-input"
+                type="month"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
                 className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent font-bold"
               />
             </div>
@@ -1378,6 +1657,7 @@ function ManagerReportsPage({
   waitersList: any[];
 }) {
   const { t } = useTranslation();
+  const { apiDownload, setGlobalLoading } = useApp();
   const [selectedMonth, setSelectedMonth] = useState('2026-06');
   const [selectedDept, setSelectedDept] = useState('');
   const [selectedCafe, setSelectedCafe] = useState('');
@@ -1418,52 +1698,28 @@ function ManagerReportsPage({
   });
 
   // Exporters
-  const handleExportXLSX = () => {
-    exportMonthlyReportToExcel(filteredRows, 'ESROM_Monthly_Meal_Reconciliation_Report');
+  const exportFinancialReport = async (format: 'xlsx' | 'pdf' | 'csv') => {
+    const month = selectedMonth || new Date().toISOString().slice(0, 7);
+    try {
+      setGlobalLoading(true);
+      const { blob, contentDisposition } = await apiDownload(
+        `/api/company-manager/reports/financial?month=${encodeURIComponent(month)}&format=${format}`
+      );
+      const fileName = getFileNameFromContentDisposition(
+        contentDisposition,
+        `company-financial-report-${month}.${format}`
+      );
+      downloadBlobFile(blob, fileName);
+    } catch (error) {
+      console.error('Failed to download company financial report:', error);
+    } finally {
+      setGlobalLoading(false);
+    }
   };
 
-  const handleExportCSV = () => {
-    const csvData = filteredRows.map(row => ({
-      'Employee ID': row.employeeId,
-      'Employee Name': row.employeeName,
-      Department: row.department,
-      'Total Orders': row.totalOrders,
-      'Total Amount Used (ETB)': row.amountUsed,
-      'Remaining Balance (ETB)': row.remainingBalance,
-      'Waiter Name': row.waiterName,
-      'Food Ordered': row.foodOrdered,
-      Date: row.date ? new Date(row.date).toLocaleDateString() : ''
-    }));
-    exportToCSV(csvData, 'ESROM_Meal_Reconciliation_Report');
-  };
-
-  const handleExportPDF = () => {
-    const headers = [
-      'Employee ID',
-      'Name',
-      'Department',
-      'Orders',
-      'Amount Used',
-      'Remaining',
-      'Date'
-    ];
-    const body = filteredRows.map(row => [
-      row.employeeId,
-      row.employeeName,
-      row.department,
-      row.totalOrders,
-      formatETB(row.amountUsed),
-      formatETB(row.remainingBalance),
-      row.date ? new Date(row.date).toLocaleDateString() : 'N/A'
-    ]);
-
-    exportToPDF(
-      headers,
-      body,
-      'Monthly Meal Reconciliation Report',
-      'ESROM_Monthly_Meal_Reconciliation_Report'
-    );
-  };
+  const handleExportXLSX = () => exportFinancialReport('xlsx');
+  const handleExportCSV = () => exportFinancialReport('csv');
+  const handleExportPDF = () => exportFinancialReport('pdf');
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -1511,7 +1767,7 @@ function ManagerReportsPage({
           >
             <option value="">All Departments</option>
             {departmentsList.map(d => (
-              <option key={d.id} value={d.name}>{d.name}</option>
+              <option key={d.id} value={d.id}>{d.name}</option>
             ))}
           </select>
         </div>
@@ -1693,39 +1949,100 @@ function ManagerFeedbackPage({ feedbacks }: { feedbacks: any[] }) {
 // -----------------------------------------------------------
 // SUB-PAGE 7: AUDIT LOGS
 // -----------------------------------------------------------
-function ManagerAuditLogsPage({ auditLogs }: { auditLogs: any[] }) {
+function ManagerAuditLogsPage({ auditLogs: initialAuditLogs }: { auditLogs: any[] }) {
+  const { apiGet } = useApp();
+  const [logs, setLogs] = useState<any[]>(initialAuditLogs || []);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [limit] = useState(15);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
   const [roleFilter, setRoleFilter] = useState('');
   const [actionFilter, setActionFilter] = useState('');
 
-  const filteredLogs = auditLogs.filter(log => {
-    const matchesRole = roleFilter ? log.role === roleFilter : true;
-    const matchesAction = actionFilter ? log.action.toLowerCase().includes(actionFilter.toLowerCase()) : true;
-    return matchesRole && matchesAction;
+  const fetchLogs = async (currentPage = page, searchAction = actionFilter) => {
+    setLoading(true);
+    try {
+      let url = `/api/audit-logs?page=${currentPage}&limit=${limit}`;
+      if (searchAction.trim()) {
+        url += `&action=${encodeURIComponent(searchAction.trim())}`;
+      }
+      const res = await apiGet(url);
+      const items = res?.data?.items || res?.items || [];
+      const total = res?.data?.total ?? res?.total ?? items.length;
+      const pages = res?.data?.total_pages ?? res?.total_pages ?? (Math.ceil(total / limit) || 1);
+
+      const formatted = items.map((log: any) => ({
+        id: log.id,
+        timestamp: log.created_at,
+        employeeId: log.users?.employee_external_id || (log.user_id ? `ID: ${log.user_id}` : 'System'),
+        userName: log.users?.fullname || (log.user_id ? `User #${log.user_id}` : 'System'),
+        role: log.users?.role || (log.user_id || log.users ? 'User' : 'System'),
+        action: log.action || 'N/A',
+        details: log.description || log.entity_type || log.ip_address || 'System Activity'
+      }));
+
+      setLogs(formatted);
+      setTotalPages(pages);
+      setTotalCount(total);
+    } catch (e) {
+      console.error('Error loading audit logs', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLogs(1, actionFilter);
+  }, []);
+
+  const handleSearchChange = (val: string) => {
+    setActionFilter(val);
+    setPage(1);
+    fetchLogs(1, val);
+  };
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setPage(newPage);
+      fetchLogs(newPage, actionFilter);
+    }
+  };
+
+  const filteredLogs = logs.filter(log => {
+    const matchesRole = roleFilter ? log.role.toLowerCase() === roleFilter.toLowerCase() : true;
+    return matchesRole;
   });
 
   return (
     <div className="space-y-6 animate-fadeIn">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-extrabold text-primary tracking-tight">Audit Logs</h1>
-        <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Immutable system actions and security logs</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold text-primary tracking-tight">Audit Logs</h1>
+          <p className="text-xs text-subtle-text font-medium uppercase tracking-wider mt-1">Immutable system actions and security logs</p>
+        </div>
+        <button
+          onClick={() => fetchLogs(page, actionFilter)}
+          className="self-start sm:self-auto px-4 py-2 text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl transition-all cursor-pointer border border-slate-200 dark:border-slate-800"
+        >
+          {loading ? 'Refreshing...' : 'Refresh Logs'}
+        </button>
       </div>
 
       {/* Filters */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-4 rounded-3xl border border-slate-100 shadow-sm text-xs">
         <div className="space-y-1.5">
-          <label className="font-bold text-slate-700">Filter by User Role</label>
+          <label className="font-bold text-slate-700">Filter by User Type</label>
           <select
             id="audit-role-filter"
             value={roleFilter}
             onChange={(e) => setRoleFilter(e.target.value)}
             className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent font-semibold"
           >
-            <option value="">All Roles</option>
-            <option value="manager">Company Manager</option>
-            <option value="cafe">Café Manager</option>
-            <option value="employee">Employee</option>
-            <option value="waiter">Waiter</option>
+            <option value="">All Types</option>
+            <option value="user">User</option>
+            <option value="system">System</option>
           </select>
         </div>
         <div className="space-y-1.5">
@@ -1735,7 +2052,7 @@ function ManagerAuditLogsPage({ auditLogs }: { auditLogs: any[] }) {
             type="text"
             placeholder="Search keywords e.g. login, delete..."
             value={actionFilter}
-            onChange={(e) => setActionFilter(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent"
           />
         </div>
@@ -1750,28 +2067,65 @@ function ManagerAuditLogsPage({ auditLogs }: { auditLogs: any[] }) {
                 <th className="py-4 px-6">Timestamp</th>
                 <th className="py-4 px-4">User ID</th>
                 <th className="py-4 px-4">User Name</th>
-                <th className="py-4 px-4">Role</th>
+                <th className="py-4 px-4">Role / Type</th>
                 <th className="py-4 px-4">Action</th>
                 <th className="py-4 px-6">Details</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs font-mono">
-              {filteredLogs.map((log) => (
-                <tr key={log.id} className="hover:bg-slate-50/40 transition-colors">
-                  <td className="py-3 px-6 text-slate-400 font-semibold">{new Date(log.timestamp).toLocaleString()}</td>
-                  <td className="py-3 px-4 font-bold text-slate-500">{log.employeeId}</td>
-                  <td className="py-3 px-4 font-sans font-bold text-primary">{log.userName}</td>
-                  <td className="py-3 px-4 font-sans">
-                    <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-slate-100 text-slate-600">
-                      {log.role}
-                    </span>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-400 font-sans">
+                    Loading audit records...
                   </td>
-                  <td className="py-3 px-4 font-sans font-bold text-secondary">{log.action}</td>
-                  <td className="py-3 px-6 font-sans text-slate-600 font-medium">{log.details}</td>
                 </tr>
-              ))}
+              ) : filteredLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-400 font-sans">
+                    No audit log records found.
+                  </td>
+                </tr>
+              ) : (
+                filteredLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-slate-50/40 transition-colors">
+                    <td className="py-3 px-6 text-slate-400 font-semibold">{log.timestamp ? new Date(log.timestamp).toLocaleString() : 'N/A'}</td>
+                    <td className="py-3 px-4 font-bold text-slate-500">{log.employeeId}</td>
+                    <td className="py-3 px-4 font-sans font-bold text-primary">{log.userName}</td>
+                    <td className="py-3 px-4 font-sans">
+                      <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-slate-100 text-slate-600">
+                        {log.role}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 font-sans font-bold text-secondary">{log.action}</td>
+                    <td className="py-3 px-6 font-sans text-slate-600 font-medium">{log.details}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination controls */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 text-xs font-sans">
+          <span className="text-slate-500 font-medium">
+            Page {page} of {totalPages} ({totalCount} total entries)
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handlePageChange(page - 1)}
+              disabled={page <= 1 || loading}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 font-bold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => handlePageChange(page + 1)}
+              disabled={page >= totalPages || loading}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 font-bold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1840,16 +2194,19 @@ function ManagerMessagesPage({
     setLocalMessages(prev => [...prev, newMsg]);
 
     try {
-      await apiPost('/api/messages', {
-        text: textToSend,
-        conversationId: activeChat.id
+      // Messages are delivered as in-app notifications to the employee
+      await apiPost('/api/notifications', {
+        user_id: activeChat.userId,
+        title: 'Message from manager',
+        message: textToSend,
+        type: 'feedback'
       });
 
       if (activeChat.isNewEmptyChat) {
         setLocalConversations(prev =>
           prev.map(c => c.id === activeChat.id ? { ...c, isNewEmptyChat: false, lastMessage: textToSend } : c)
         );
-        setActiveChat(prev => ({ ...prev, isNewEmptyChat: false, lastMessage: textToSend }));
+        setActiveChat((prev: any) => ({ ...prev, isNewEmptyChat: false, lastMessage: textToSend }));
       } else {
         setLocalConversations(prev =>
           prev.map(c => c.id === activeChat.id ? { ...c, lastMessage: textToSend } : c)
@@ -1898,6 +2255,7 @@ function ManagerMessagesPage({
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         unreadCount: 0,
         employeeId: targetId,
+        userId: emp.id,
         isNewEmptyChat: true,
       };
       setLocalConversations(prev => [newConv, ...prev]);

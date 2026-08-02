@@ -1,23 +1,7 @@
-import React, {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  useCallback,
-  useRef,
-} from "react";
-import i18n from "../i18n/i18n";
-import { useTheme } from "./ThemeContext";
-import {
-  User,
-  MenuItem,
-  Order,
-  Feedback,
-  AuditLog,
-  Message,
-  Conversation,
-  WaiterPerformance,
-} from "../types";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import i18n from '../i18n/i18n';
+import { useTheme } from './ThemeContext';
+import { User, MenuItem, Order, Feedback, AuditLog, Message, Conversation, WaiterPerformance } from '../types';
 
 interface AppContextType {
   user: User | null;
@@ -61,13 +45,23 @@ interface AppContextType {
   refreshData: () => Promise<void>;
   apiGet: (path: string) => Promise<any>;
   apiPost: (path: string, body: any) => Promise<any>;
+  apiPostForm: (path: string, formData: FormData) => Promise<any>;
   apiPut: (path: string, body: any) => Promise<any>;
   apiPatch: (path: string, body: any) => Promise<any>;
   apiDelete: (path: string) => Promise<any>;
+  apiDownload: (path: string) => Promise<{ blob: Blob; contentDisposition?: string | null }>;
 }
 
-// Normalizes field names between the real backend's snake_case API
-// and the camelCase shape the rest of the frontend was built against.
+// Normalizes the backend's snake_case API responses into camelCase — the one
+// casing convention the rest of the frontend uses. Keys in KEY_RENAMES get a
+// semantic rename instead of the mechanical snake→camel conversion.
+const KEY_RENAMES: Record<string, string> = {
+  fullname: 'fullName',
+  employee_external_id: 'employeeId',
+};
+
+const toCamelCase = (key: string) => key.replace(/_+([a-z0-9])/g, (_, ch) => ch.toUpperCase());
+
 function normalizeApiData<T = any>(data: any): T {
   if (Array.isArray(data)) {
     return data.map(normalizeApiData) as any;
@@ -75,18 +69,20 @@ function normalizeApiData<T = any>(data: any): T {
   if (data && typeof data === "object") {
     const result: any = {};
     for (const key of Object.keys(data)) {
-      const value = normalizeApiData(data[key]);
-      if (key === "fullname") {
-        result["fullName"] = value;
-      } else if (key === "employee_external_id") {
-        result["employeeId"] = value;
-      } else {
-        result[key] = value;
-      }
+      result[KEY_RENAMES[key] ?? toCamelCase(key)] = normalizeApiData(data[key]);
     }
     return result;
   }
   return data;
+}
+
+export function normalizeRole(role?: string | null) {
+  if (!role) return null;
+
+  const normalizedRole = role.toLowerCase();
+  if (normalizedRole === 'company_manager') return 'manager';
+  if (normalizedRole === 'cafe_manager') return 'cafe';
+  return normalizedRole;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -138,181 +134,184 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const syncInProgressRef = useRef(false);
 
   // Synced state triggers
-  const apiGet = useCallback(
-    async (path: string) => {
-      const headers: HeadersInit = { "Content-Type": "application/json" };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
+  // Attempt to refresh token using stored refresh_token. Single-flight:
+  // concurrent 401s share one in-flight refresh instead of racing each other,
+  // which matters because the backend rotates (revokes) the refresh token on use.
+  const refreshPromiseRef = useRef<Promise<boolean> | null>(null);
+  const attemptRefresh = useCallback((): Promise<boolean> => {
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
+    const refreshToken = localStorage.getItem('refresh_token');
+    if (!refreshToken || isOffline) return Promise.resolve(false);
+    const promise = (async () => {
+      try {
+        const res = await fetch('/api/auth/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken })
+        });
+        if (!res.ok) return false;
+        const json = await res.json();
+        const newToken = json.data?.token || json.token;
+        const newRefresh = json.data?.refresh_token || json.refresh_token;
+        if (newToken) {
+          localStorage.setItem('token', newToken);
+          setToken(newToken);
+        }
+        if (newRefresh) {
+          localStorage.setItem('refresh_token', newRefresh);
+        }
+        return true;
+      } catch (e) {
+        console.error('Refresh token failed', e);
+        return false;
+      } finally {
+        refreshPromiseRef.current = null;
       }
-      const response = await fetch(path, { headers });
-      if (response.status === 401) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("role");
-        setToken(null);
-        setUser(null);
-        throw new Error("Your session has expired");
-      }
-      if (!response.ok) {
-        const err = await response
-          .json()
-          .catch(() => ({ message: "API error" }));
-        throw new Error(err.message || "API error");
-      }
-      const json = await response.json();
-      return normalizeApiData(json);
-    },
-    [token, isOffline],
-  );
+    })();
+    refreshPromiseRef.current = promise;
+    return promise;
+  }, [isOffline]);
 
-  const apiPost = useCallback(
-    async (path: string, body: any) => {
-      const headers: HeadersInit = { "Content-Type": "application/json" };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-      const response = await fetch(path, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      });
-
-      if (response.status === 401) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("role");
-        setToken(null);
-        setUser(null);
-        throw new Error("Your session has expired");
-      }
-
-      if (!response.ok) {
-        const err = await response
-          .json()
-          .catch(() => ({ message: "API error" }));
-        throw new Error(err.message || "API error");
-      }
-      const json = await response.json();
-      return normalizeApiData(json);
-    },
-    [token, isOffline],
-  );
-
-  const apiPut = useCallback(
-    async (path: string, body: any) => {
-      const headers: HeadersInit = { "Content-Type": "application/json" };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-      const response = await fetch(path, {
-        method: "PUT",
-        headers,
-        body: JSON.stringify(body),
-      });
-      if (response.status === 401) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("role");
-        setToken(null);
-        setUser(null);
-        throw new Error("Your session has expired");
-      }
-      if (!response.ok) {
-        const err = await response
-          .json()
-          .catch(() => ({ message: "API error" }));
-        throw new Error(err.message || "API error");
-      }
-      const json = await response.json();
-      return normalizeApiData(json);
-    },
-    [token, isOffline],
-  );
-
-  const apiPatch = useCallback(
-    async (path: string, body: any) => {
-      const headers: HeadersInit = { "Content-Type": "application/json" };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-      const response = await fetch(path, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify(body),
-      });
-      if (response.status === 401) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("role");
-        setToken(null);
-        setUser(null);
-        throw new Error("Your session has expired");
-      }
-      if (!response.ok) {
-        const err = await response
-          .json()
-          .catch(() => ({ message: "API error" }));
-        throw new Error(err.message || "API error");
-      }
-      const json = await response.json();
-      return normalizeApiData(json);
-    },
-    [token, isOffline],
-  );
-
-  const apiDelete = useCallback(
-    async (path: string) => {
-      const headers: HeadersInit = { "Content-Type": "application/json" };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-      const response = await fetch(path, {
-        method: "DELETE",
-        headers,
-      });
-      if (response.status === 401) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("role");
-        setToken(null);
-        setUser(null);
-        throw new Error("Your session has expired");
-      }
-      if (!response.ok) {
-        const err = await response
-          .json()
-          .catch(() => ({ message: "API error" }));
-        throw new Error(err.message || "API error");
-      }
-      const json = await response.json();
-      return normalizeApiData(json);
-    },
-    [token, isOffline],
-  );
-
-  // Auth fetch
-  const fetchMe = useCallback(async () => {
-    console.log("[fetchMe] starting, token:", token);
-    if (!token || isOffline) return;
-    try {
-      console.log("[fetchMe] fetching profile...");
-      const profileRes = await apiGet("/api/employee/profile");
-      console.log("[fetchMe] profile done:", profileRes);
-      console.log("[fetchMe] fetching balance...");
-      const balanceRes = await apiGet("/api/employee/balance");
-      console.log("[fetchMe] balance done:", balanceRes);
-      const cachedRole = localStorage.getItem("role");
-      const updatedUser = {
-        ...profileRes.data,
-        role: cachedRole,
-        balance: balanceRes.data.balance,
-      };
-      setUser(updatedUser);
-      localStorage.setItem("user", JSON.stringify(updatedUser));
-      console.log("[fetchMe] user set successfully");
-    } catch (e) {
-      console.log("[fetchMe] ERROR:", e);
-      setUser(null);
-      setToken(null);
-      localStorage.removeItem("token");
-      localStorage.removeItem("role");
+  // Core fetch helper that retries once after refresh
+  const performFetch = useCallback(async (path: string, opts: RequestInit = {}, retry = true) => {
+    if (isOffline) {
+      throw new Error('Offline mode active. API calls unavailable.');
     }
-  }, [token, isOffline, apiGet]);
+    const currentToken = localStorage.getItem('token') || token;
+    const isFormData = opts.body instanceof FormData;
+    const headers: any = {
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+      ...(opts.headers || {})
+    };
+    if (currentToken) headers['Authorization'] = `Bearer ${currentToken}`;
+    const response = await fetch(path, { ...opts, headers });
+    if (response.status === 401) {
+      if (retry) {
+        const ok = await attemptRefresh();
+        if (ok) {
+          // retry once with fresh token read directly from localStorage
+          return performFetch(path, opts, false);
+        }
+      }
+      // logout
+      localStorage.removeItem('token');
+      localStorage.removeItem('role');
+      localStorage.removeItem('user');
+      localStorage.removeItem('refresh_token');
+      setToken(null);
+      setUser(null);
+      const expired: any = new Error('Your session has expired');
+      expired.status = 401;
+      throw expired;
+    }
+    if (response.status === 403) {
+      // Authenticated but not allowed — do NOT log out, just surface the denial.
+      const err = await response.json().catch(() => ({} as any));
+      const forbidden: any = new Error(err.message || "You don't have permission to perform this action.");
+      forbidden.status = 403;
+      throw forbidden;
+    }
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ message: 'API error' }));
+      const error: any = new Error(err.message || 'API error');
+      error.status = response.status;
+      throw error;
+    }
+    return response;
+  }, [token, isOffline, attemptRefresh]);
+
+  const apiGet = useCallback(async (path: string) => {
+    const res = await performFetch(path, { method: 'GET' });
+    return res.json();
+  }, [performFetch]);
+
+  const apiPost = useCallback(async (path: string, body: any) => {
+    const res = await performFetch(path, { method: 'POST', body: JSON.stringify(body) });
+    const json = await res.json();
+    return normalizeApiData(json);
+  }, [performFetch]);
+
+  // Goes through performFetch so multipart uploads get the same 401-refresh
+  // retry and error handling as JSON calls (FormData bodies skip Content-Type).
+  const apiPostForm = useCallback(async (path: string, formData: FormData) => {
+    const res = await performFetch(path, { method: 'POST', body: formData });
+    const json = await res.json();
+    return normalizeApiData(json);
+  }, [performFetch]);
+
+  const apiPatch = useCallback(async (path: string, body: any) => {
+    const res = await performFetch(path, { method: 'PATCH', body: JSON.stringify(body) });
+    const json = await res.json();
+    return normalizeApiData(json);
+  }, [performFetch]);
+
+  // All backend update routes are PATCH; kept as an alias for existing apiPut call sites.
+  const apiPut = apiPatch;
+  const apiDelete = useCallback(async (path: string) => {
+    const res = await performFetch(path, { method: 'DELETE' });
+    const json = await res.json();
+    return normalizeApiData(json);
+  }, [performFetch]);
+
+  const apiDownload = useCallback(async (path: string) => {
+    const res = await performFetch(path, { method: 'GET' });
+    const blob = await res.blob();
+    return { blob, contentDisposition: res.headers.get('Content-Disposition') };
+  }, [performFetch]);
+
+  // Auth fetch - ask server for the current employee profile only if role is employee
+const fetchMe = useCallback(async () => {
+  const activeToken = localStorage.getItem("token") || token;
+  if (!activeToken || isOffline) return;
+
+  const storedRole = localStorage.getItem("role");
+  const storedUserStr = localStorage.getItem("user");
+
+  // Non-employees don't have an employee profile endpoint.
+  // Restore the cached user instead.
+  if (storedRole && storedRole !== "employee") {
+    if (storedUserStr) {
+      try {
+        setUser(JSON.parse(storedUserStr));
+      } catch (e) {
+        console.error("Error parsing cached user:", e);
+        localStorage.removeItem("user");
+      }
+    }
+    return;
+  }
+
+  try {
+    const [profileRes, balanceRes] = await Promise.all([
+      apiGet("/api/employee/profile"),
+      apiGet("/api/employee/balance").catch(() => null),
+    ]);
+
+    const apiUser = normalizeApiData(profileRes.data || profileRes);
+
+    const mappedRole = normalizeRole(apiUser.roles?.[0]);
+    const balance = Number(
+      balanceRes?.data?.balance ??
+      balanceRes?.balance ??
+      0
+    );
+
+    const userData = {
+      ...apiUser,
+      balance,
+      role: mappedRole || apiUser.role || "employee",
+    };
+
+    setUser(userData);
+    localStorage.setItem("user", JSON.stringify(userData));
+
+    if (mappedRole) {
+      localStorage.setItem("role", mappedRole);
+    }
+  } catch (e) {
+    console.error("Failed fetching profile:", e);
+  }
+}, [token, isOffline, apiGet]);
 
   // Rehydrate the authenticated employee after a full page reload. The cached
   // user above lets the portal render immediately while this refreshes current
@@ -341,48 +340,68 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Fetch notifications
-  const fetchNotifications = useCallback(async () => {
-    if (!token || isOffline) return;
+const fetchNotifications = useCallback(async () => {
+  const activeToken = localStorage.getItem("token") || token;
+  if (!activeToken || isOffline) return;
 
-    // GUARD CONDITION: Do not query employee notifications if the user is a manager or cafe admin
-    const currentRole = user?.role || localStorage.getItem("role");
-    if (
-      currentRole === "manager" ||
-      currentRole === "cafe" ||
-      currentRole === "waiter"
-    ) {
-      return;
-    }
+  try {
+    const res = await apiGet("/api/notifications");
 
-    try {
-      const data = await apiGet("/api/employee/notifications");
-      setNotifications(data.notifications || []);
-      setUnreadCount(
-        (data.notifications || []).filter((n: any) => !n.read).length,
-      );
-    } catch (e) {
-      console.error("Error loading notifications", e);
-    }
-  }, [token, apiGet, isOffline, user]);
+    const rawItems =
+      res?.data?.items ||
+      res?.items ||
+      (Array.isArray(res?.data) ? res.data : []);
 
-  useEffect(() => {
-    const currentRole = user?.role || localStorage.getItem("role");
+    const items = rawItems.map((n: any) => ({
+      id: n.id,
+      title: n.title,
+      message: n.message,
+      type: n.type,
+      read: n.is_read,
+      timestamp: n.created_at
+        ? new Date(n.created_at).toLocaleString()
+        : "",
+    }));
 
-    if (
-      token &&
-      currentRole !== "manager" &&
-      currentRole !== "cafe" &&
-      currentRole !== "waiter"
-    ) {
-      fetchNotifications();
+    setNotifications(items);
+  } catch (error) {
+    console.error("Error loading notifications:", error);
+  }
+}, [token, apiGet, isOffline]);
 
-      const interval = setInterval(() => {
-        fetchNotifications();
-      }, 7000);
+ // Fetch unread notification count
+const fetchUnreadCount = useCallback(async () => {
+  const activeToken = localStorage.getItem("token") || token;
+  if (!activeToken || isOffline) return;
 
-      return () => clearInterval(interval);
-    }
-  }, [token, fetchNotifications, user]);
+  try {
+    const res = await apiGet("/api/notifications/unread-count");
+    const count = res?.data?.count ?? res?.count ?? 0;
+    setUnreadCount(count);
+  } catch (error) {
+    console.error("Error loading unread notification count:", error);
+  }
+}, [token, apiGet, isOffline]);
+
+// Initial load + polling
+useEffect(() => {
+  if (!token || isOffline) return;
+
+  fetchNotifications();
+  fetchUnreadCount();
+
+  const interval = setInterval(() => {
+    fetchNotifications();
+    fetchUnreadCount();
+  }, 7000);
+
+  return () => clearInterval(interval);
+}, [
+  token,
+  isOffline,
+  fetchNotifications,
+  fetchUnreadCount,
+]);
 
   // Theme is handled in ThemeContext
 
@@ -392,25 +411,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("esrom_lang", lang);
   };
 
-  const login = async (employeeId: string, password: string): Promise<any> => {
-    setGlobalLoading(true);
-    try {
-      const res = await apiPost("/api/auth/login", {
-        employee_external_id: employeeId,
-        password,
-      });
-      const { token, refresh_token, user: apiUser } = res.data;
+const login = async (employeeId: string, password: string): Promise<any> => {
+  setGlobalLoading(true);
+  try {
+    const res = await apiPost('/api/auth/login', { employee_external_id: employeeId, password });
+    // apiPost responses are camelCased by normalizeApiData (refresh_token -> refreshToken)
+    const { token, refreshToken, user: apiUser } = res.data;
 
-      let mappedRole = apiUser.roles[0];
-      if (mappedRole === "company_manager") mappedRole = "manager";
-      else if (mappedRole === "cafe_manager") mappedRole = "cafe";
+    const mappedRole = normalizeRole(apiUser.roles[0]);
+    const userData = { ...apiUser, role: mappedRole || apiUser.role || 'employee' };
 
-      const userData = { ...apiUser, role: mappedRole };
-
-      localStorage.setItem("token", token);
-      localStorage.setItem("role", mappedRole);
-      localStorage.setItem("user", JSON.stringify(userData));
-      if (refresh_token) localStorage.setItem("refresh_token", refresh_token);
+    localStorage.setItem('token', token);
+    localStorage.setItem('role', mappedRole || userData.role || 'employee');
+    localStorage.setItem('user', JSON.stringify(userData));
+    if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
 
       setToken(token);
       setUser(userData);
@@ -424,8 +438,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("role");
+    localStorage.removeItem('token');
+    localStorage.removeItem('role');
+    localStorage.removeItem('user');
+    localStorage.removeItem('refresh_token');
     setToken(null);
     setUser(null);
     setCart([]);
@@ -470,7 +486,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const markNotificationsAsRead = async () => {
     if (!token || isOffline) return;
     try {
-      await apiPost("/api/notifications/read-all", {});
+      await apiPatch('/api/notifications/read-all', {});
       setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
       setUnreadCount(0);
     } catch (e) {
@@ -487,44 +503,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const clearOfflineOrderResult = () => setOfflineOrderResult(null);
 
-  // Sync waiter offline queue
-  const triggerSync = useCallback(async () => {
-    if (
-      offlineQueue.length === 0 ||
-      !token ||
-      syncInProgressRef.current
-    ) {
-      return;
-    }
+  
+        
+// Sync waiter offline queue
+const triggerSync = useCallback(async () => {
+  if (
+    offlineQueue.length === 0 ||
+    !token ||
+    syncInProgressRef.current
+  ) {
+    return;
+  }
 
-    syncInProgressRef.current = true;
-    setGlobalLoading(true);
+  syncInProgressRef.current = true;
+  setGlobalLoading(true);
 
-    const stillFailed: any[] = [];
+  try {
+    await apiPost("/api/waiter/sync-orders", {
+      orders: offlineQueue,
+    });
 
-    try {
-      for (const order of offlineQueue) {
-        try {
-          const response = await apiPost("/api/waiter/order", order);
-          if (response?.data) setOfflineOrderResult(response.data);
-        } catch (e) {
-          console.error("Retry failed for queued order:", e);
-          stillFailed.push(order);
-        }
-      }
+    setOfflineQueue([]);
+    localStorage.setItem("esrom_offline_queue", "[]");
 
-      setOfflineQueue(stillFailed);
-      localStorage.setItem("esrom_offline_queue", JSON.stringify(stillFailed));
-
-      if (stillFailed.length === 0) {
-        fetchNotifications();
-      }
-    } finally {
-      syncInProgressRef.current = false;
-      setGlobalLoading(false);
-    }
-  }, [offlineQueue, token, apiPost, fetchNotifications]);
-
+    fetchNotifications();
+  } catch (e) {
+    console.error("Sync failed:", e);
+  } finally {
+    setGlobalLoading(false);
+    syncInProgressRef.current = false;
+  }
+}, [offlineQueue, token, apiPost, fetchNotifications]);
+        
   // Auto-sync when online restores
   useEffect(() => {
     if (offlineQueue.length > 0 && token) {
@@ -543,6 +553,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const refreshData = async () => {
     await fetchMe();
     await fetchNotifications();
+    await fetchUnreadCount();
   };
 
   return (
@@ -580,9 +591,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         refreshData,
         apiGet,
         apiPost,
+        apiPostForm,
         apiPut,
         apiPatch,
         apiDelete,
+        apiDownload
       }}
     >
       {children}
