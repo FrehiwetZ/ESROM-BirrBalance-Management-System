@@ -3,20 +3,27 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
+const PORT = Number(process.env.PORT) || 3000;
+
 async function startServer() {
   const app = express();
-  const PORT = 3000;
 
-  app.use('/api', createProxyMiddleware({
-  target: 'http://localhost:5000',
-  changeOrigin: true,
-  pathRewrite: {
-    '^': '/api',
-  },
-  headers: {
-    'Connection': 'upgrade',
-  },
-}));
+  const apiProxy = createProxyMiddleware({
+    target: BACKEND_URL,
+    changeOrigin: true,
+    pathRewrite: {
+      '^': '/api',
+    },
+  });
+
+  const uploadsProxy = createProxyMiddleware({
+    target: BACKEND_URL,
+    changeOrigin: true,
+  });
+
+  app.use('/api', apiProxy);
+  app.use('/uploads', uploadsProxy);
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -33,7 +40,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on http://0.0.0.0:${PORT} (API proxy → ${BACKEND_URL})`);
   });
 }
 
