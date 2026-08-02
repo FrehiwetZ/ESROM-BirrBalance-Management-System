@@ -93,7 +93,7 @@ const normalizeFeedback = (f: any) => ({
 });
 
 export default function ManagerPortal() {
-  const { user, apiGet, apiPost, apiPut, apiDelete, apiDownload, setGlobalLoading } = useApp();
+  const { user, apiGet, apiPost, apiPut, apiPatch, apiDelete, setGlobalLoading } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
@@ -193,13 +193,13 @@ export default function ManagerPortal() {
           .filter((e: any) => (e.roles || []).includes('waiter'))
       );
     } catch (e: any) {
+
       console.error('Error loading manager data', e);
       setPortalError(e.message || 'Failed to load dashboard data. Please try again.');
     } finally {
       setPortalLoading(false);
     }
   };
-
   useEffect(() => {
     if (user && user.role === 'manager') {
       loadPortalData();
@@ -254,6 +254,7 @@ export default function ManagerPortal() {
           onReload={loadPortalData}
           apiPost={apiPost}
           apiPut={apiPut}
+          apiPatch={apiPatch}
           apiDelete={apiDelete}
         />
       )}
@@ -631,6 +632,7 @@ function ManagerEmployeesPage({
   departmentsList,
   onReload,
   apiPost,
+  apiPatch,
   apiPut,
   apiDelete
 }: {
@@ -638,6 +640,7 @@ function ManagerEmployeesPage({
   departmentsList: any[];
   onReload: () => Promise<void>;
   apiPost: (path: string, body: any) => Promise<any>;
+  apiPatch: (path: string, body: any) => Promise<any>;
   apiPut: (path: string, body: any) => Promise<any>;
   apiDelete: (path: string) => Promise<any>;
 }) {
@@ -650,6 +653,7 @@ function ManagerEmployeesPage({
   const [newEmpId, setNewEmpId] = useState('');
   const [newFullName, setNewFullName] = useState('');
   const [newDepartment, setNewDepartment] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newTier, setNewTier] = useState('Tier 1');
@@ -675,7 +679,7 @@ function ManagerEmployeesPage({
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEmpId.trim() || !newFullName.trim() || !newDepartment || !newEmail.trim()) {
+    if (!newEmpId.trim() || !newFullName.trim() || !newDepartment || !newEmail.trim() || !newPassword.trim()) {
       setFormError('All fields with * are required.');
       return;
     }
@@ -693,6 +697,7 @@ function ManagerEmployeesPage({
       });
 
       // Clear form
+      setNewPassword('');
       setNewEmpId('');
       setNewFullName('');
       setNewDepartment('');
@@ -709,12 +714,8 @@ function ManagerEmployeesPage({
 
   const handleDeactivate = async (emp: any) => {
     try {
-      // Backend exposes these as PATCH routes (apiPut sends PATCH)
-      if (emp.isActive) {
-        await apiPut(`/api/company-manager/employees/${emp.id}/deactivate`, {});
-      } else {
-        await apiPut(`/api/company-manager/employees/${emp.id}/activate`, {});
-      }
+      const action = emp.isActive ? 'deactivate' : 'activate';
+      await apiPatch(`/api/company-manager/employees/${emp.id}/${action}`, {});
       onReload();
     } catch (e) {
       console.error(e);
@@ -803,7 +804,7 @@ function ManagerEmployeesPage({
             placeholder="Search by name or ID..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent text-xs dark:text-white"
+            className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent text-xs text-slate-900 dark:text-slate-900"
           />
         </div>
       </div>
@@ -998,6 +999,18 @@ function ManagerEmployeesPage({
                     onChange={(e) => setNewPhone(e.target.value)}
                     className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent"
                   />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700">Temporary Password *</label>
+                    <input
+                      id="add-emp-password"
+                      type="text"
+                      required
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent"
+                      placeholder="e.g. ChangeMe123!"
+                    />
                 </div>
               </div>
 
@@ -1342,6 +1355,10 @@ function ManagerBalancePage({
   const [option, setOption] = useState<'department' | 'employee'>('department');
   const [targetId, setTargetId] = useState('');
   const [amount, setAmount] = useState('');
+  const [month, setMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [successAllocMsg, setSuccessAllocMsg] = useState('');
 
@@ -1367,47 +1384,53 @@ function ManagerBalancePage({
     return count * Number(amount || 0);
   };
 
-  const handleAllocate = async () => {
-    if (!amount || !targetId) return;
+ const handleAllocate = async () => {
+  if (!amount || !targetId || !month) return;
+  try {
+    let successCount = 0;
+    let failCount = 0;
 
-    try {
-      // POST /api/company-manager/balances/allocations
-      // Backend expects: { user_id, amount, month }
-      const currentMonth = new Date().toISOString().slice(0, 7);
-      if (option === 'employee') {
-        // Single employee allocation
-        await apiPost('/api/company-manager/balances/allocations', {
-          user_id: Number(targetId),
-          amount: Number(amount),
-          month: currentMonth,
-        });
-        setSuccessAllocMsg(`Allocated ${formatETB(Number(amount))} successfully to 1 employee!`);
-      } else {
-        // Department allocation — allocate per active employee in dept
-        const deptEmps = employeesList.filter((e: any) => e.department === targetId && e.isActive !== false);
-        for (const emp of deptEmps) {
+    if (option === 'employee') {
+      await apiPost('/api/company-manager/balances/allocations', {
+        user_id: Number(targetId),
+        amount: Number(amount),
+        month,
+      });
+      successCount = 1;
+    } else {
+      // Department: backend only supports one employee per call, so loop
+      const targets = employeesList.filter((e) => e.department === targetId && e.isActive);
+      for (const emp of targets) {
+        try {
           await apiPost('/api/company-manager/balances/allocations', {
             user_id: Number(emp.id),
             amount: Number(amount),
-            month: currentMonth,
+            month,
           });
+          successCount++;
+        } catch (e) {
+          failCount++;
         }
-        setSuccessAllocMsg(`Allocated ${formatETB(Number(amount))} to ${deptEmps.length} employees in ${targetId}!`);
       }
-
-      setShowWarningModal(false);
-      setAmount('');
-      setTargetId('');
-      setSearchEmp('');
-      onReload();
-
-      setTimeout(() => {
-        setSuccessAllocMsg('');
-      }, 5000);
-    } catch (e: any) {
-      alert(e.message || 'Error allocating balance');
     }
-  };
+
+    if (failCount > 0) {
+      setSuccessAllocMsg(`Allocated to ${successCount} employees, ${failCount} failed (likely already allocated for this month).`);
+    } else {
+      setSuccessAllocMsg(`Allocated ${formatETB(Number(amount))} successfully to ${successCount} employee(s)!`);
+    }
+    setShowWarningModal(false);
+    setAmount('');
+    setTargetId('');
+    setSearchEmp('');
+    onReload();
+    setTimeout(() => {
+      setSuccessAllocMsg('');
+    }, 5000);
+  } catch (e: any) {
+    alert(e.message || 'Error allocating balance');
+  }
+};
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -1468,7 +1491,7 @@ function ManagerBalancePage({
                 >
                   <option value="">-- Choose Department --</option>
                   {departmentsList.map((d) => (
-                    <option key={d.id} value={d.name}>{d.name}</option>
+                    <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </select>
               </div>
@@ -1518,6 +1541,17 @@ function ManagerBalancePage({
                 placeholder="e.g. 1500"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent font-bold"
+              />
+            </div>
+             {/* Month */}
+            <div className="space-y-1.5">
+              <label className="font-bold text-slate-700">Allocation Month</label>
+              <input
+                id="alloc-month-input"
+                type="month"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
                 className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-accent font-bold"
               />
             </div>
@@ -1733,7 +1767,7 @@ function ManagerReportsPage({
           >
             <option value="">All Departments</option>
             {departmentsList.map(d => (
-              <option key={d.id} value={d.name}>{d.name}</option>
+              <option key={d.id} value={d.id}>{d.name}</option>
             ))}
           </select>
         </div>
